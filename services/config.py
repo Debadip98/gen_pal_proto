@@ -124,11 +124,35 @@ def get_app_password() -> Optional[str]:
 
 
 def configure_langsmith() -> bool:
-    """Wire LangSmith env vars when tracing is enabled. Returns the enabled flag."""
+    """Wire LangSmith env vars when tracing is enabled. Returns the enabled flag.
+
+    On Streamlit Cloud the values live in ``st.secrets`` (not ``os.environ``),
+    so we copy them into ``os.environ`` here. Both the modern ``LANGSMITH_*``
+    and the legacy ``LANGCHAIN_*`` names are set because the langsmith SDK reads
+    whichever it finds first.
+
+    Critically, langsmith caches env-var reads (``get_env_var`` is lru_cached).
+    If the SDK read these vars before this function ran — which happens at
+    import time when only ``st.secrets`` is populated — it cached "tracing
+    disabled" and would ignore the values we set above. We clear that cache so
+    the new values actually take effect and the pipeline shows up in LangSmith.
+    """
     if not is_langsmith_tracing_enabled():
         return False
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGCHAIN_API_KEY"] = get_langsmith_api_key() or ""
-    os.environ["LANGCHAIN_PROJECT"] = get_langsmith_project()
-    os.environ.setdefault("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+    api_key = get_langsmith_api_key() or ""
+    project = get_langsmith_project()
+    endpoint = "https://api.smith.langchain.com"
+    for prefix in ("LANGSMITH", "LANGCHAIN"):
+        os.environ[f"{prefix}_TRACING"] = "true"
+        os.environ[f"{prefix}_TRACING_V2"] = "true"
+        os.environ[f"{prefix}_API_KEY"] = api_key
+        os.environ[f"{prefix}_PROJECT"] = project
+        os.environ.setdefault(f"{prefix}_ENDPOINT", endpoint)
+
+    try:
+        from langsmith import utils as _ls_utils
+
+        _ls_utils.get_env_var.cache_clear()
+    except Exception:  # never block the app if the SDK internals change
+        pass
     return True
