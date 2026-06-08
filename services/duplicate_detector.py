@@ -18,9 +18,18 @@ import random
 
 from services import config
 
+try:  # tracing is optional; degrade to a no-op decorator if unavailable
+    from langsmith import traceable
+except Exception:  # pragma: no cover - langsmith always present in prototype
+    def traceable(*_args, **_kwargs):
+        def _decorator(func):
+            return func
+        return _decorator
+
 _MOCK_DIM = 64
 
 
+@traceable(run_type="chain", name="duplicate_check")
 def find_duplicates(rows: list[dict], threshold: float, *, client=None) -> list[dict]:
     """Return flagged pairs (cosine similarity > threshold) across ``rows``.
 
@@ -60,9 +69,11 @@ def _embed(questions: list[str], *, client=None) -> list[list[float]]:
         return [_mock_embedding(q) for q in questions]
 
     if client is None:
-        from openai import OpenAI
+        # Reuse the (LangSmith-wrapped, when enabled) client factory so
+        # embedding calls are traced too.
+        from services import generator
 
-        client = OpenAI(api_key=config.get_openai_api_key())
+        client = generator.make_client()
 
     response = client.embeddings.create(
         model=config.get_openai_embedding_model(),

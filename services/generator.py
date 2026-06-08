@@ -20,6 +20,14 @@ from typing import Callable, Optional
 
 from services import config, plan
 
+try:  # tracing is optional; degrade to a no-op decorator if unavailable
+    from langsmith import traceable
+except Exception:  # pragma: no cover - langsmith always present in prototype
+    def traceable(*_args, **_kwargs):
+        def _decorator(func):
+            return func
+        return _decorator
+
 _SYSTEM_PROMPT = (
     "You are an expert enterprise exam author building a professional skills "
     "question bank. Every question must be scenario-based, enterprise-realistic, "
@@ -33,14 +41,29 @@ ProgressCallback = Optional[Callable[[str], None]]
 
 
 def make_client():
-    """Return an OpenAI client, or None in mock mode."""
+    """Return an OpenAI client, or None in mock mode.
+
+    When LangSmith tracing is enabled the client is wrapped with
+    ``wrap_openai`` so every chat/embedding call is sent to LangSmith. A plain
+    (unwrapped) client emits no traces, which is why tracing previously did
+    nothing despite the env vars being set.
+    """
     if config.use_mock_data():
         return None
     from openai import OpenAI
 
-    return OpenAI(api_key=config.get_openai_api_key())
+    client = OpenAI(api_key=config.get_openai_api_key())
+    if config.is_langsmith_tracing_enabled():
+        try:
+            from langsmith.wrappers import wrap_openai
+
+            client = wrap_openai(client)
+        except Exception:  # never block generation if wrapping fails
+            pass
+    return client
 
 
+@traceable(run_type="chain", name="generate_level")
 def generate_level(
     skill: str,
     ssid: str,
