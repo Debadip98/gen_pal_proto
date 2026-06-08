@@ -2,7 +2,4 @@ streamlit
 openai
 openpyxl
 langsmith
-numpy
 python-dotenv
-pypdf
-python-docx
