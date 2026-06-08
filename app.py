@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services import config, dedup, export, generation, ingest
+from services import config, plan
 
 
 def _password_gate() -> None:
@@ -43,136 +43,186 @@ def _render_sidebar_status() -> None:
             st.success("OpenAI configured")
 
 
-def _require_openai_or_mock() -> None:
+def _render_header() -> None:
+    st.title("GenPal Question Bank Factory - Prototype")
+    st.caption("AI-assisted question bank generation for GenPal-ready Excel output.")
+    st.markdown(
+        "**How it works**\n"
+        "1. Enter question bank input\n"
+        "2. Generate and validate questions\n"
+        "3. Download GenPal-ready Excel"
+    )
     if config.use_mock_data():
-        return
-    if not config.get_openai_api_key():
-        st.error(
-            "OPENAI_API_KEY is not configured. Set it in .env or Streamlit secrets, "
-            "or set USE_MOCK_DATA=true to run in mock mode."
+        st.info("Mock Mode is enabled. No OpenAI API calls will be made.")
+    else:
+        st.success(
+            "Real API Mode is enabled. OpenAI API calls will be used for "
+            "generation and embeddings."
         )
-        st.stop()
+
+
+def _render_mode_and_levels() -> tuple[str, list[str]]:
+    mode = st.radio(
+        "Generation Mode",
+        options=plan.GENERATION_MODES,
+        index=0,
+        key="genpal_mode",
+    )
+
+    if mode == plan.FULL_MODE:
+        st.info(
+            "Full GenPal Mode will generate all 7 career levels with 252 total questions."
+        )
+        st.multiselect(
+            "Career Levels",
+            options=plan.CAREER_LEVELS,
+            default=list(plan.CAREER_LEVELS),
+            disabled=True,
+            key="genpal_levels_full",
+        )
+        levels = list(plan.CAREER_LEVELS)
+    else:
+        levels = st.multiselect(
+            "Career Levels",
+            options=plan.CAREER_LEVELS,
+            default=list(plan.DEFAULT_PROTOTYPE_LEVELS),
+            key="genpal_levels_proto",
+        )
+        if len(levels) > plan.MAX_PROTOTYPE_LEVELS:
+            st.warning(
+                "Prototype mode supports a maximum of 3 career levels. "
+                "Please select up to 3 levels."
+            )
+
+    return mode, levels
+
+
+def _render_input_form() -> tuple[bool, str, str, str]:
+    with st.form("genpal_form"):
+        skill = st.text_input(
+            "Skill Name",
+            placeholder="Example: Azure DevOps, Python, Generative AI, Snowflake, SAP ABAP",
+        )
+        topics_raw = st.text_area(
+            "Topic List",
+            help="Paste one topic per line.",
+            placeholder="Azure Repos\nAzure Pipelines\nAzure Boards\nAzure Artifacts",
+            height=160,
+        )
+        urls_raw = st.text_area(
+            "Reference URL List",
+            help="Paste one reference URL per line.",
+            placeholder=(
+                "https://learn.microsoft.com/en-us/azure/devops/repos/\n"
+                "https://learn.microsoft.com/en-us/azure/devops/pipelines/\n"
+                "https://learn.microsoft.com/en-us/azure/devops/boards/"
+            ),
+            height=160,
+        )
+        submitted = st.form_submit_button("Generate Question Bank", type="primary")
+    return submitted, skill, topics_raw, urls_raw
+
+
+def _render_output_panel(mode: str, levels: list[str]) -> None:
+    current = plan.build_plan(mode, levels)
+    inputs = st.session_state.get("_genpal_inputs")
+
+    st.subheader("Expected Output")
+    with st.container(border=True):
+        st.markdown(f"**Mode:** {current.mode}")
+        st.markdown(
+            "**Selected skill:** "
+            + (inputs["skill"] if inputs else "—")
+        )
+        st.markdown(
+            "**Number of topics:** "
+            + (str(inputs["topic_count"]) if inputs else "—")
+        )
+        st.markdown(
+            "**Number of reference URLs:** "
+            + (str(inputs["url_count"]) if inputs else "—")
+        )
+        st.markdown(
+            "**Selected career levels:** "
+            + (", ".join(current.levels) if current.levels else "—")
+        )
+        st.markdown(f"**Questions per level:** {current.per_level}")
+        st.markdown(f"**Total expected questions:** {current.total_questions}")
+        st.markdown(f"**Excel sheet name:** {current.sheet_name}")
+        st.markdown(f"**Output columns:** {current.column_count}")
+
+
+def _validate(
+    mode: str, levels: list[str], skill: str, topics: list[str], urls: list[str]
+) -> list[str]:
+    errors: list[str] = []
+
+    if not skill.strip():
+        errors.append("Please enter a skill name before generation.")
+
+    if not topics:
+        errors.append("Please enter at least one topic.")
+
+    if not urls:
+        errors.append("Please enter at least one reference URL.")
+    elif not all(plan.looks_like_url(u) for u in urls):
+        errors.append("URLs should look like valid HTTP/HTTPS links.")
+
+    if mode == plan.PROTOTYPE_MODE:
+        if not levels:
+            errors.append("Please select at least one career level.")
+        elif len(levels) > plan.MAX_PROTOTYPE_LEVELS:
+            errors.append(
+                "Prototype mode supports a maximum of 3 career levels. "
+                "Please select up to 3 levels."
+            )
+
+    return errors
 
 
 def main() -> None:
     st.set_page_config(page_title="GenPal Question Bank Factory", layout="wide")
     _password_gate()
     _render_sidebar_status()
-    _require_openai_or_mock()
 
-    st.title("GenPal Question Bank Factory")
-    st.write(
-        "Streamlit prototype for generating, deduplicating, and exporting question banks. "
-        "Enter a prompt and/or upload source material to generate short-answer questions."
-    )
+    _render_header()
+    st.divider()
 
-    _render_generation()
-
-
-def _render_generation() -> None:
-    with st.form("generation_form"):
-        prompt = st.text_area(
-            "Prompt / instructions",
-            placeholder="e.g. Generate short-answer questions on the causes of World War I "
-            "for a high-school history exam.",
-            height=140,
-        )
-        uploaded = st.file_uploader(
-            "Source material (optional)",
-            type=list(ingest.SUPPORTED_EXTENSIONS),
-            help="Upload a document to ground the questions in its content. "
-            "Supported: " + ", ".join("." + e for e in ingest.SUPPORTED_EXTENSIONS),
-        )
-        col_count, col_difficulty = st.columns(2)
-        with col_count:
-            count = st.number_input(
-                "Number of questions", min_value=1, max_value=50, value=5, step=1
-            )
-        with col_difficulty:
-            difficulty = st.selectbox(
-                "Difficulty", options=generation.VALID_DIFFICULTIES, index=1
-            )
-        submitted = st.form_submit_button("Generate questions")
+    left, right = st.columns([2, 1])
+    with left:
+        mode, levels = _render_mode_and_levels()
+        submitted, skill, topics_raw, urls_raw = _render_input_form()
+        status_area = st.container()
+    with right:
+        panel_area = st.container()
 
     if submitted:
-        source_text = ""
-        if uploaded is not None:
-            try:
-                source_text = ingest.extract_text(uploaded.name, uploaded.getvalue())
-            except Exception as exc:  # surface extraction errors without crashing
-                st.error(f"Could not read uploaded file: {exc}")
-                return
-            if not source_text.strip():
-                st.warning("No readable text found in the uploaded file.")
-                return
+        topics = plan.parse_lines(topics_raw)
+        urls = plan.parse_lines(urls_raw)
+        errors = _validate(mode, levels, skill, topics, urls)
 
-        if not prompt.strip() and not source_text:
-            st.warning("Enter a prompt or upload source material before generating.")
-            return
+        if errors:
+            with status_area:
+                st.error("Please fix the following before generating:")
+                for message in errors:
+                    st.warning(message)
+        else:
+            resolved = plan.build_plan(mode, levels)
+            st.session_state["_genpal_inputs"] = {
+                "skill": skill.strip(),
+                "topics": topics,
+                "topic_count": len(topics),
+                "urls": urls,
+                "url_count": len(urls),
+                "mode": resolved.mode,
+                "levels": resolved.levels,
+                "total_questions": resolved.total_questions,
+            }
+            with status_area:
+                st.success("Ready to generate.")
 
-        try:
-            with st.spinner("Generating questions..."):
-                questions = generation.generate_questions(
-                    prompt=prompt,
-                    count=int(count),
-                    difficulty=difficulty,
-                    source_text=source_text,
-                )
-            st.session_state["_genpal_questions"] = [q.to_dict() for q in questions]
-            st.session_state["_genpal_grounded"] = bool(source_text)
-            st.session_state.pop("_genpal_removed", None)
-        except Exception as exc:  # surface generation/API errors without crashing
-            st.error(f"Generation failed: {exc}")
-            return
-
-    _render_results()
-
-
-def _render_results() -> None:
-    questions = st.session_state.get("_genpal_questions")
-    if not questions:
-        return
-
-    st.subheader(f"Generated questions ({len(questions)})")
-    if st.session_state.get("_genpal_grounded"):
-        st.caption("Grounded in uploaded source material.")
-    if st.button("Remove duplicates"):
-        try:
-            with st.spinner("Checking for duplicates..."):
-                result = dedup.deduplicate(questions)
-            st.session_state["_genpal_questions"] = result.kept
-            st.session_state["_genpal_removed"] = result.removed
-            st.rerun()
-        except Exception as exc:  # surface embedding/API errors without crashing
-            st.error(f"Deduplication failed: {exc}")
-
-    col_xlsx, col_csv = st.columns(2)
-    with col_xlsx:
-        st.download_button(
-            "Download Excel (.xlsx)",
-            data=export.to_xlsx_bytes(questions),
-            file_name="question_bank.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    with col_csv:
-        st.download_button(
-            "Download CSV",
-            data=export.to_csv_bytes(questions),
-            file_name="question_bank.csv",
-            mime="text/csv",
-        )
-
-    removed = st.session_state.get("_genpal_removed")
-    if removed:
-        st.info(f"Removed {len(removed)} duplicate question(s).")
-        with st.expander("Show removed duplicates"):
-            for q in removed:
-                st.markdown(f"- {q['question']}")
-
-    for i, q in enumerate(questions, start=1):
-        with st.expander(f"Q{i}. {q['question']}"):
-            st.markdown(f"**Answer:** {q['answer']}")
-            st.caption(f"Difficulty: {q['difficulty']}")
+    with panel_area:
+        _render_output_panel(mode, levels)
 
 
 if __name__ == "__main__":
