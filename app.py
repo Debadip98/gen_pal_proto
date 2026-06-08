@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services import config, plan
+from services import config, genpal, plan
 
 
 def _password_gate() -> None:
@@ -220,9 +220,54 @@ def main() -> None:
             }
             with status_area:
                 st.success("Ready to generate.")
+                _run_generation(skill.strip(), topics, urls, mode, levels)
 
     with panel_area:
         _render_output_panel(mode, levels)
+
+    _render_results()
+
+
+def _run_generation(
+    skill: str, topics: list[str], urls: list[str], mode: str, levels: list[str]
+) -> None:
+    progress = st.progress(0.0, text="Generating question bank...")
+
+    def on_progress(done: int, total: int) -> None:
+        progress.progress(done / total, text=f"Generating... batch {done} of {total}")
+
+    try:
+        records = genpal.generate_question_bank(
+            skill, topics, urls, mode, levels, progress_cb=on_progress
+        )
+    except Exception as exc:  # surface generation/API errors without crashing
+        progress.empty()
+        st.error(f"Generation failed: {exc}")
+        return
+
+    progress.empty()
+    st.session_state["_genpal_records"] = records
+    st.session_state["_genpal_xlsx"] = genpal.to_xlsx_bytes(records)
+
+
+def _render_results() -> None:
+    records = st.session_state.get("_genpal_records")
+    if not records:
+        return
+
+    st.divider()
+    st.subheader(f"Generated question bank ({len(records)} questions)")
+    st.download_button(
+        "Download GenPal Excel (.xlsx)",
+        data=st.session_state["_genpal_xlsx"],
+        file_name="genpal_question_bank.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+    )
+    st.caption(f"Sheet: {plan.EXCEL_SHEET_NAME} · Columns: {len(genpal.GENPAL_COLUMNS)}")
+    st.dataframe(records[:50], use_container_width=True, hide_index=True)
+    if len(records) > 50:
+        st.caption(f"Showing first 50 of {len(records)} rows. Download for the full bank.")
 
 
 if __name__ == "__main__":
