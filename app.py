@@ -189,6 +189,7 @@ def _run_pipeline() -> None:
     topics, urls = inputs["topics"], inputs["urls"]
     levels, total = inputs["levels"], inputs["total"]
     threshold = config.get_duplicate_similarity_threshold()
+    max_regen = config.get_max_regeneration_attempts()
 
     locked: dict = st.session_state.setdefault("_genpal_locked", {})
     # Reset transient (recomputed) state each run; keep locked levels.
@@ -210,16 +211,34 @@ def _run_pipeline() -> None:
             def on_batch(label: str, _level=level) -> None:
                 progress.progress(done / len(levels), text=f"Generating {label}...")
 
-            rows = generator.generate_level(
-                skill, ssid, level, topics, urls, client=client, progress_cb=on_batch
-            )
-            dups = duplicate_detector.find_duplicates(rows, threshold, client=client)
+            # Generate the level, then auto-regenerate (feeding the duplicate
+            # questions back into the prompt) until the per-level duplicate
+            # check passes or the retry budget is spent. Only then do we block.
+            rows: list[dict] = []
+            dups: list[dict] = []
+            for attempt in range(max_regen + 1):
+                if attempt > 0:
+                    progress.progress(
+                        done / len(levels),
+                        text=f"{level}: duplicates found — regenerating "
+                        f"(attempt {attempt}/{max_regen})...",
+                    )
+                avoid = [d["question1"] for d in dups] + [d["question2"] for d in dups]
+                rows = generator.generate_level(
+                    skill, ssid, level, topics, urls,
+                    client=client, progress_cb=on_batch,
+                    avoid_questions=avoid,
+                )
+                dups = duplicate_detector.find_duplicates(rows, threshold, client=client)
+                if not dups:
+                    break
+
             if dups:
                 st.session_state["_genpal_level_dups"] = {level: dups}
                 st.session_state["_genpal_pending_level"] = level
                 st.session_state["_genpal_pending_count"] = len(rows)
                 progress.empty()
-                return  # block: do not continue to the next career level
+                return  # block: auto-regeneration could not clear the duplicates
 
             locked[level] = rows
             done += 1
@@ -299,8 +318,8 @@ def _render_results() -> None:
     # Per-level duplicate block (Check 1).
     if pending_level and level_dups.get(pending_level):
         st.error(
-            f"Career level {pending_level} has similar questions. "
-            "Resolve before continuing to the next level."
+            f"Career level {pending_level} still has similar questions after "
+            "automatic regeneration. Resolve before continuing to the next level."
         )
         _render_duplicate_findings(level_dups[pending_level])
         if st.button(f"Regenerate {pending_level}", key="regen_level"):

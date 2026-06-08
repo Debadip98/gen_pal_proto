@@ -73,12 +73,19 @@ def generate_level(
     *,
     client=None,
     progress_cb: ProgressCallback = None,
+    avoid_questions: Optional[list[str]] = None,
 ) -> list[dict]:
-    """Generate exactly 40 rows for one career level as five complexity batches."""
+    """Generate exactly 40 rows for one career level as five complexity batches.
+
+    ``avoid_questions`` lists question texts the model must not repeat or
+    paraphrase. It is populated on regeneration after a duplicate check fails,
+    steering the model toward distinct scenarios instead of blocking the run.
+    """
     skill = (skill or "").strip()
     ssid = (ssid or "").strip()
     topics = [t.strip() for t in topics if t and t.strip()]
     urls = [u.strip() for u in urls if u and u.strip()]
+    avoid = [q.strip() for q in (avoid_questions or []) if q and q.strip()]
 
     use_mock = config.use_mock_data()
     if not use_mock and client is None:
@@ -91,7 +98,9 @@ def generate_level(
         if use_mock:
             items = _mock_items(skill, level, complexity, count, topics, urls)
         else:
-            items = _openai_items(client, skill, level, complexity, count, topics, urls)
+            items = _openai_items(
+                client, skill, level, complexity, count, topics, urls, avoid
+            )
         rows.extend(
             _build_rows(items, skill, ssid, level, complexity, count, topics, urls)
         )
@@ -151,15 +160,27 @@ def _pick(value, options: list[str]) -> str:
 
 
 def _build_prompt(
-    skill: str, level: str, complexity: str, count: int, topics: list[str], urls: list[str]
+    skill: str, level: str, complexity: str, count: int,
+    topics: list[str], urls: list[str], avoid: Optional[list[str]] = None,
 ) -> str:
     topic_block = "\n".join(f"- {t}" for t in topics)
     url_block = "\n".join(f"- {u}" for u in urls)
+    avoid_block = ""
+    if avoid:
+        avoid_list = "\n".join(f"- {q}" for q in avoid)
+        avoid_block = (
+            "A previous attempt produced questions that were too similar to each "
+            "other. Generate genuinely DIFFERENT scenarios this time. Each new "
+            "question must be clearly distinct in meaning, context, and wording "
+            "from every question below — do not repeat or paraphrase them:\n"
+            f"{avoid_list}\n\n"
+        )
     return (
         f"Generate exactly {count} {complexity}-complexity, scenario-based QnA "
         f"questions.\n"
         f"Skill: {skill}\n"
         f"Career level: {level}\n\n"
+        f"{avoid_block}"
         "Each question must describe a realistic enterprise scenario and ask one "
         "direct question. The answer must be technically accurate and specific "
         "(not generic). Do NOT produce multiple-choice questions or any options.\n\n"
@@ -179,7 +200,7 @@ def _build_prompt(
 
 def _openai_items(
     client, skill: str, level: str, complexity: str, count: int,
-    topics: list[str], urls: list[str],
+    topics: list[str], urls: list[str], avoid: Optional[list[str]] = None,
 ) -> list[dict]:
     response = client.chat.completions.create(
         model=config.get_openai_generation_model(),
@@ -187,7 +208,9 @@ def _openai_items(
             {"role": "system", "content": _SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": _build_prompt(skill, level, complexity, count, topics, urls),
+                "content": _build_prompt(
+                    skill, level, complexity, count, topics, urls, avoid
+                ),
             },
         ],
         response_format={"type": "json_object"},

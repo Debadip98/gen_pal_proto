@@ -27,6 +27,7 @@ _GENERATION_MODEL_DEFAULT = "gpt-4o"
 _EMBEDDING_MODEL_DEFAULT = "text-embedding-3-small"
 _LANGSMITH_PROJECT_DEFAULT = "genpal-prototype"
 _SIMILARITY_THRESHOLD_DEFAULT = 0.88
+_MAX_REGEN_ATTEMPTS_DEFAULT = 3
 
 
 def _from_secrets(key: str) -> Optional[str]:
@@ -99,6 +100,23 @@ def get_duplicate_similarity_threshold() -> float:
         return float(raw)
     except ValueError:
         return _SIMILARITY_THRESHOLD_DEFAULT
+
+
+def get_max_regeneration_attempts() -> int:
+    """How many times a career level may be auto-regenerated to clear duplicates.
+
+    Counts regeneration retries only; the initial generation is always free.
+    The run blocks (and shows the manual-resolve message) only after these
+    retries are exhausted.
+    """
+    raw = _get("MAX_REGENERATION_ATTEMPTS")
+    if raw is None:
+        return _MAX_REGEN_ATTEMPTS_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _MAX_REGEN_ATTEMPTS_DEFAULT
+    return value if value >= 0 else _MAX_REGEN_ATTEMPTS_DEFAULT
 
 
 def get_app_password() -> Optional[str]:
