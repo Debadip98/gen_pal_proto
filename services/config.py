@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - streamlit always available in prototype
 _GENERATION_MODEL_DEFAULT = "gpt-4o"
 _EMBEDDING_MODEL_DEFAULT = "text-embedding-3-small"
 _LANGSMITH_PROJECT_DEFAULT = "genpal-prototype"
-_SIMILARITY_THRESHOLD_DEFAULT = 0.85
+_SIMILARITY_THRESHOLD_DEFAULT = 0.88
 
 
 def _from_secrets(key: str) -> Optional[str]:
