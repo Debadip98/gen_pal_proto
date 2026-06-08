@@ -170,7 +170,9 @@ def _reset_pipeline_state() -> None:
         "_genpal_pending_level",
         "_genpal_pending_count",
         "_genpal_merged",
-        "_genpal_global_dups",
+        "_genpal_final_status",
+        "_genpal_final_report",
+        "_genpal_override",
         "_genpal_errors",
         "_genpal_xlsx",
         "_genpal_filename",
@@ -192,18 +194,25 @@ def _run_pipeline() -> None:
 
     locked: dict = st.session_state.setdefault("_genpal_locked", {})
     # Reset transient (recomputed) state each run; keep locked levels.
-    for key in ("_genpal_level_dups", "_genpal_pending_level", "_genpal_global_dups",
-                "_genpal_errors", "_genpal_merged", "_genpal_xlsx", "_genpal_filename"):
+    for key in ("_genpal_level_dups", "_genpal_pending_level", "_genpal_errors",
+                "_genpal_merged", "_genpal_final_status", "_genpal_final_report",
+                "_genpal_xlsx", "_genpal_filename"):
         st.session_state.pop(key, None)
 
     client = generator.make_client()
     progress = st.progress(0.0, text="Starting generation...")
     done = 0
+    # Question texts from already-locked earlier levels; fed to later levels so
+    # they avoid repeating prior questions (cuts down cross-level duplicates).
+    existing_questions: list[str] = []
 
     try:
         for level in levels:
             if level in locked:
                 done += 1
+                existing_questions.extend(
+                    str(r.get("question", "")) for r in locked[level]
+                )
                 progress.progress(done / len(levels), text=f"{level}: already locked")
                 continue
 
@@ -217,6 +226,7 @@ def _run_pipeline() -> None:
             rows = generator.generate_level(
                 skill, ssid, level, topics, urls,
                 client=client, progress_cb=on_batch,
+                avoid_existing=list(existing_questions),
             )
             rows, dups = genpal.resolve_internal_duplicates(
                 rows, threshold,
@@ -233,27 +243,34 @@ def _run_pipeline() -> None:
                 return  # block: auto-regeneration could not clear the duplicates
 
             locked[level] = rows
+            existing_questions.extend(str(r.get("question", "")) for r in rows)
             done += 1
             progress.progress(done / len(levels), text=f"{level}: locked ({len(rows)} rows)")
 
-        # All selected levels are locked — merge, title, global check, validate, export.
-        # The merged rows are the same dict objects held in ``locked`` (order_and_title
-        # mutates in place), so surgically regenerating a duplicate row here also
-        # updates the corresponding locked level — no extra bookkeeping needed.
+        # All selected levels are locked — merge, title, then run the bounded
+        # final global duplicate repair. The merged rows are the same dict
+        # objects held in ``locked`` (order_and_title mutates in place), so
+        # reworking a duplicate row here also updates the locked level.
         merged = genpal.finalize(genpal.merge_locked_levels(locked, levels))
-        merged, gdups = genpal.resolve_internal_duplicates(
-            merged, threshold,
-            topics=topics, urls=urls, client=client, max_attempts=max_regen,
+        merged, final_status, report = genpal.final_global_duplicate_repair(
+            merged, threshold, client=client,
+            max_passes=config.get_max_global_duplicate_repair_passes(),
+            max_attempts_per_row=config.get_max_global_rework_attempts_per_row(),
+            max_rows_per_pass=config.get_max_global_rework_rows_per_pass(),
+            min_improvement_delta=config.get_min_improvement_delta(),
             progress_cb=lambda msg: progress.progress(
-                done / len(levels), text=f"final 280-row check: {msg}..."),
+                done / len(levels), text=f"final duplicate repair: {msg}..."),
         )
+        # Re-title deterministically 1..N after any rework (order is stable
+        # because career_level/complexity never change during rework).
+        merged = genpal.finalize(merged)
         st.session_state["_genpal_merged"] = merged
+        st.session_state["_genpal_final_status"] = final_status
+        st.session_state["_genpal_final_report"] = report
 
-        if gdups:
-            st.session_state["_genpal_global_dups"] = gdups
-            progress.empty()
-            return  # block export only if surgical regeneration could not resolve
-
+        # Schema/value validation is independent of duplicates, so build the
+        # workbook whenever the rows are structurally valid. The download is
+        # gated in the UI by final status (or manual override).
         row_errors = validators.validate_rows(
             merged, skill, ssid, topics, urls, expected_count=total
         )
@@ -277,6 +294,10 @@ def _run_pipeline() -> None:
         progress.empty()
 
 
+def _pair_status_label(similarity: float) -> str:
+    return "EXACT_DUPLICATE" if float(similarity) >= 1.0 else "CANDIDATE"
+
+
 def _render_duplicate_findings(findings: list[dict]) -> None:
     with st.expander("Duplicate / Similar Scenario Findings", expanded=True):
         st.warning(f"{len(findings)} similar pair(s) above the threshold.")
@@ -285,10 +306,86 @@ def _render_duplicate_findings(findings: list[dict]) -> None:
                 f"- **Rows {f['row1']} & {f['row2']}** · "
                 f"{f['career_level1']}/{f['complexity1']} vs "
                 f"{f['career_level2']}/{f['complexity2']} · "
-                f"similarity **{f['similarity']}**"
+                f"similarity **{f['similarity']}** · {_pair_status_label(f['similarity'])}"
             )
             st.caption(f"Q{f['row1']}: {f['question1']}")
             st.caption(f"Q{f['row2']}: {f['question2']}")
+
+
+def _render_final_report(report: dict, status: str) -> None:
+    """Duplicate / Similar Scenario Findings expander for the final 280-row pass."""
+    overall = {
+        genpal.FINAL_DUPLICATE_CHECK_PASSED: "REWORKED" if report.get("reworked_count")
+        else "FALSE_POSITIVE",
+        genpal.FINAL_MANUAL_REVIEW_REQUIRED: "MANUAL_REVIEW_REQUIRED",
+        genpal.FINAL_REPAIR_FAILED: "MANUAL_REVIEW_REQUIRED",
+    }.get(status, "CANDIDATE")
+
+    with st.expander("Duplicate / Similar Scenario Findings", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Duplicate pairs found", report.get("initial_pair_count", 0))
+        c2.metric("Rows reworked", report.get("reworked_count", 0))
+        c3.metric("Unresolved pairs", report.get("unresolved_pair_count", 0))
+        c1.metric("Unresolved clusters", report.get("cluster_count", 0))
+        c2.metric("Max similarity", report.get("max_similarity", 0.0))
+        c3.metric("Status", overall)
+
+        unresolved = report.get("unresolved_pairs") or []
+        if unresolved:
+            st.markdown("**Unresolved similar pairs**")
+            for f in unresolved:
+                st.markdown(
+                    f"- **Rows {f['row1']} & {f['row2']}** · "
+                    f"{f['career_level1']}/{f['complexity1']} vs "
+                    f"{f['career_level2']}/{f['complexity2']} · "
+                    f"similarity **{f['similarity']}** · "
+                    f"{_pair_status_label(f['similarity'])}"
+                )
+                st.caption(f"Q{f['row1']}: {f['question1']}")
+                st.caption(f"Q{f['row2']}: {f['question2']}")
+
+        reworked = report.get("reworked") or []
+        if reworked:
+            st.markdown("**Reworked rows**")
+            for r in reworked:
+                st.markdown(f"- **Row {r['row']}** · attempt {r['attempts']} · REWORKED")
+                st.caption(f"Old: {r['old']}")
+                st.caption(f"New: {r['new']}")
+
+
+def _render_download(merged: list[dict], xlsx: bytes, *, warn: bool = False) -> None:
+    if warn:
+        st.warning(
+            "This export contains unresolved similar pairs accepted via manual "
+            "override."
+        )
+    st.download_button(
+        "Download GenPal Excel (.xlsx)",
+        data=xlsx,
+        file_name=st.session_state.get("_genpal_filename", "genpal_question_bank.xlsx"),
+        mime=XLSX_MIME,
+        type="primary",
+    )
+    st.caption(
+        f"File: {st.session_state.get('_genpal_filename')} · "
+        f"Sheet: {plan.EXCEL_SHEET_NAME} · Columns: {plan.EXCEL_COLUMN_COUNT}"
+    )
+    st.dataframe(merged[:50], use_container_width=True, hide_index=True)
+    if len(merged) > 50:
+        st.caption(f"Showing first 50 of {len(merged)} rows. Download for the full bank.")
+
+
+def _render_manual_override(merged: list[dict] | None, xlsx: bytes | None) -> None:
+    """Offer the explicit override that unblocks export despite unresolved pairs."""
+    override = st.checkbox(
+        "I confirm these remaining pairs are acceptable or will be reviewed "
+        "manually.",
+        key="_genpal_override",
+    )
+    if override and xlsx and merged:
+        _render_download(merged, xlsx, warn=True)
+    elif not override:
+        st.info("Export is blocked until the override above is confirmed.")
 
 
 def _render_results() -> None:
@@ -300,7 +397,8 @@ def _render_results() -> None:
     locked = st.session_state.get("_genpal_locked", {})
     level_dups = st.session_state.get("_genpal_level_dups", {})
     pending_level = st.session_state.get("_genpal_pending_level")
-    global_dups = st.session_state.get("_genpal_global_dups")
+    final_status = st.session_state.get("_genpal_final_status")
+    final_report = st.session_state.get("_genpal_final_report") or {}
     errors = st.session_state.get("_genpal_errors")
     xlsx = st.session_state.get("_genpal_xlsx")
     merged = st.session_state.get("_genpal_merged")
@@ -327,17 +425,7 @@ def _render_results() -> None:
             st.rerun()
         return
 
-    # Global duplicate block (Check 2).
-    if global_dups:
-        st.error("Final 280-row check found similar questions. Export is blocked.")
-        _render_duplicate_findings(global_dups)
-        if st.button("Clear all levels and regenerate", key="regen_global"):
-            _reset_pipeline_state()
-            st.session_state["_genpal_should_run"] = True
-            st.rerun()
-        return
-
-    # Validation / post-export errors.
+    # Schema / post-export validation errors (independent of duplicates).
     if errors:
         st.error("Validation failed. Export is blocked.")
         for message in errors[:50]:
@@ -350,23 +438,45 @@ def _render_results() -> None:
             st.rerun()
         return
 
-    # Success — download available.
-    if xlsx and merged:
-        st.success(f"All checks passed. {len(merged)} questions ready.")
-        st.download_button(
-            "Download GenPal Excel (.xlsx)",
-            data=xlsx,
-            file_name=st.session_state.get("_genpal_filename", "genpal_question_bank.xlsx"),
-            mime=XLSX_MIME,
-            type="primary",
+    # Final global duplicate repair outcome (Check 2).
+    if final_status == genpal.FINAL_MANUAL_REVIEW_REQUIRED:
+        st.warning(
+            "Final duplicate repair reached the automatic limit. Manual review "
+            "is required before export."
         )
-        st.caption(
-            f"File: {st.session_state.get('_genpal_filename')} · "
-            f"Sheet: {plan.EXCEL_SHEET_NAME} · Columns: {plan.EXCEL_COLUMN_COUNT}"
+        _render_final_report(final_report, final_status)
+        _render_manual_override(merged, xlsx)
+        return
+
+    if final_status == genpal.FINAL_REPAIR_FAILED:
+        st.error(
+            "Final duplicate repair could not complete. Manual review is required "
+            "before export."
         )
-        st.dataframe(merged[:50], use_container_width=True, hide_index=True)
-        if len(merged) > 50:
-            st.caption(f"Showing first 50 of {len(merged)} rows. Download for the full bank.")
+        _render_final_report(final_report, final_status)
+        _render_manual_override(merged, xlsx)
+        if st.button("Clear all levels and regenerate", key="regen_failed"):
+            _reset_pipeline_state()
+            st.session_state["_genpal_should_run"] = True
+            st.rerun()
+        return
+
+    # Success — final duplicate check passed; download available.
+    if final_status == genpal.FINAL_DUPLICATE_CHECK_PASSED and xlsx and merged:
+        reworked = final_report.get("reworked_count", 0)
+        if reworked:
+            st.success(
+                f"Final duplicate check passed after reworking {reworked} row(s). "
+                f"Excel export is ready ({len(merged)} questions)."
+            )
+        else:
+            st.success(
+                f"Final duplicate check passed. Excel export is ready "
+                f"({len(merged)} questions)."
+            )
+        if final_report.get("initial_pair_count"):
+            _render_final_report(final_report, final_status)
+        _render_download(merged, xlsx)
 
 
 def main() -> None:

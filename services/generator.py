@@ -73,16 +73,22 @@ def generate_level(
     *,
     client=None,
     progress_cb: ProgressCallback = None,
+    avoid_existing: Optional[list[str]] = None,
 ) -> list[dict]:
     """Generate exactly 40 rows for one career level as five complexity batches.
 
     Duplicates are not avoided here; they are cleared afterward by surgically
     regenerating only the colliding rows (see ``regenerate_rows``).
+
+    ``avoid_existing`` carries question texts from already-locked earlier career
+    levels so later levels steer away from them — this reduces cross-level
+    duplicates surfacing in the final 280-row check.
     """
     skill = (skill or "").strip()
     ssid = (ssid or "").strip()
     topics = [t.strip() for t in topics if t and t.strip()]
     urls = [u.strip() for u in urls if u and u.strip()]
+    avoid_existing = [q.strip() for q in (avoid_existing or []) if q and q.strip()]
 
     use_mock = config.use_mock_data()
     if not use_mock and client is None:
@@ -96,7 +102,8 @@ def generate_level(
             items = _mock_items(skill, level, complexity, count, topics, urls)
         else:
             items = _openai_items(
-                client, skill, level, complexity, count, topics, urls
+                client, skill, level, complexity, count, topics, urls,
+                avoid_existing or None,
             )
         rows.extend(
             _build_rows(items, skill, ssid, level, complexity, count, topics, urls)
@@ -164,6 +171,153 @@ def regenerate_rows(
             rows[i]["reference_url"] = _pick(item.get("reference_url"), urls)
 
 
+@traceable(run_type="chain", name="rework_duplicate_row")
+def rework_duplicate_row(
+    row: dict,
+    canonical_row: dict,
+    cluster_rows: list[dict],
+    nearby_existing: list[str],
+    *,
+    client=None,
+) -> bool:
+    """Rewrite ONLY ``question``/``answer`` of ``row`` in place to break a final
+    duplicate. Every other field (title, ssid, skill, topic, question_type,
+    career_level, complexity, options, reference_url) is preserved exactly.
+
+    Returns True if the row was rewritten with usable content, else False (the
+    row is left untouched so the bounded loop can retry or escalate).
+    """
+    use_mock = config.use_mock_data()
+    if not use_mock and client is None:
+        client = make_client()
+
+    if use_mock:
+        item = _mock_rework_item(row, cluster_rows)
+    else:
+        item = _openai_rework_item(
+            row, canonical_row, cluster_rows, nearby_existing, client
+        )
+
+    question = str(item.get("question", "")).strip()
+    answer = str(item.get("answer", "")).strip()
+    if not question or not answer:
+        return False
+    row["question"] = question
+    row["answer"] = answer
+    return True
+
+
+def _rework_view(row: dict) -> dict:
+    """Compact, fixed-field view of a row for the rework prompt context."""
+    return {
+        "title": row.get("title", ""),
+        "skill": row.get("skill", ""),
+        "topic": row.get("topic", ""),
+        "career_level": row.get("career_level", ""),
+        "complexity": row.get("complexity", ""),
+        "reference_url": row.get("reference_url", ""),
+        "question": row.get("question", ""),
+        "answer": row.get("answer", ""),
+    }
+
+
+def _build_rework_prompt(
+    row: dict,
+    canonical_row: dict,
+    cluster_rows: list[dict],
+    nearby_existing: list[str],
+) -> str:
+    failed_row = json.dumps(_rework_view(row), ensure_ascii=False, indent=2)
+    canonical = json.dumps(_rework_view(canonical_row), ensure_ascii=False, indent=2)
+    cluster = json.dumps(
+        [_rework_view(r) for r in cluster_rows], ensure_ascii=False, indent=2
+    )
+    nearby = "\n".join(f"- {q}" for q in nearby_existing) or "- (none)"
+    return (
+        "You are fixing duplicate questions in a GenPal QnA question bank.\n\n"
+        "Use private reasoning.\n"
+        "Do not reveal chain-of-thought.\n"
+        "Return only JSON.\n\n"
+        "The current row is too similar to another row in the final "
+        "280-question bank.\n\n"
+        "Rewrite only the question and answer.\n\n"
+        "Preserve exactly:\n"
+        "- title\n- ssid\n- skill\n- topic\n- question_type\n- career_level\n"
+        "- complexity\n- options\n- reference_url\n\n"
+        f"Current row to rewrite:\n{failed_row}\n\n"
+        f"Canonical row that must remain different:\n{canonical}\n\n"
+        f"Other rows in the duplicate cluster:\n{cluster}\n\n"
+        f"Existing questions to avoid:\n{nearby}\n\n"
+        "Rewrite requirements:\n"
+        "- Keep the same topic.\n"
+        "- Keep the same career_level.\n"
+        "- Keep the same complexity.\n"
+        "- Keep the same reference_url.\n"
+        "- Create a materially different enterprise scenario.\n"
+        "- Do not use the same business context.\n"
+        "- Do not use the same troubleshooting path.\n"
+        "- Do not use the same opening phrase.\n"
+        "- Do not create an MCQ.\n"
+        "- Question must be 2-3 lines.\n"
+        "- Answer must be 3-4 lines.\n"
+        "- Answer must directly solve the new scenario.\n"
+        "- The new question must not be semantically similar to the canonical "
+        "row.\n\n"
+        "Return JSON only:\n"
+        '{\n  "question": "...",\n  "answer": "..."\n}'
+    )
+
+
+def _openai_rework_item(
+    row: dict,
+    canonical_row: dict,
+    cluster_rows: list[dict],
+    nearby_existing: list[str],
+    client,
+) -> dict:
+    response = client.chat.completions.create(
+        model=config.get_openai_generation_model(),
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": _build_rework_prompt(
+                    row, canonical_row, cluster_rows, nearby_existing
+                ),
+            },
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.8,
+    )
+    content = response.choices[0].message.content or "{}"
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _mock_rework_item(row: dict, cluster_rows: list[dict]) -> dict:
+    """Deterministic distinct rewrite so the offline flow resolves duplicates."""
+    seed = f"{row.get('title')}-{row.get('career_level')}-{row.get('complexity')}-{len(cluster_rows)}"
+    skill = row.get("skill", "")
+    topic = row.get("topic", "")
+    level = row.get("career_level", "")
+    complexity = row.get("complexity", "")
+    return {
+        "question": (
+            f"[Reworked {seed}] A distinct enterprise {skill} team faces a new "
+            f"{topic} situation requiring a {complexity} response. Which approach "
+            f"resolves it for a {level} practitioner?"
+        ),
+        "answer": (
+            f"[Reworked answer {seed}] Address the new {topic} scenario by "
+            f"applying the {str(complexity).lower()} practice specific to {skill}, "
+            f"distinct from the canonical case."
+        ),
+    }
+
+
 def _build_rows(
     items: list[dict],
     skill: str,
@@ -226,11 +380,13 @@ def _build_prompt(
     if avoid:
         avoid_list = "\n".join(f"- {q}" for q in avoid)
         avoid_block = (
-            "A previous attempt produced questions that were too similar to each "
-            "other. Generate genuinely DIFFERENT scenarios this time. Each new "
-            "question must be clearly distinct in meaning, context, and wording "
-            "from every question below — do not repeat or paraphrase them:\n"
+            "Existing Questions to Avoid:\n"
             f"{avoid_list}\n\n"
+            "Do not generate questions that repeat or closely resemble any "
+            "existing questions listed under Existing Questions to Avoid. Each "
+            "new question must be clearly distinct in meaning, context, and "
+            "wording from every question above — do not repeat or paraphrase "
+            "them, and use a different enterprise scenario and opening phrase.\n\n"
         )
     return (
         f"Generate exactly {count} {complexity}-complexity, scenario-based QnA "

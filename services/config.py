@@ -26,8 +26,15 @@ except Exception:  # pragma: no cover - streamlit always available in prototype
 _GENERATION_MODEL_DEFAULT = "gpt-4o"
 _EMBEDDING_MODEL_DEFAULT = "text-embedding-3-small"
 _LANGSMITH_PROJECT_DEFAULT = "genpal-prototype"
-_SIMILARITY_THRESHOLD_DEFAULT = 0.88
+_SIMILARITY_THRESHOLD_DEFAULT = 0.85
 _MAX_REGEN_ATTEMPTS_DEFAULT = 3
+
+# --- Final global duplicate repair tunables ---------------------------------
+# These bound the post-merge 280-row repair so it can never loop forever.
+MAX_GLOBAL_DUPLICATE_REPAIR_PASSES_DEFAULT = 2
+MAX_GLOBAL_REWORK_ATTEMPTS_PER_ROW_DEFAULT = 2
+MAX_GLOBAL_REWORK_ROWS_PER_PASS_DEFAULT = 15
+MIN_IMPROVEMENT_DELTA_DEFAULT = 0.01
 
 
 def _from_secrets(key: str) -> Optional[str]:
@@ -117,6 +124,55 @@ def get_max_regeneration_attempts() -> int:
     except ValueError:
         return _MAX_REGEN_ATTEMPTS_DEFAULT
     return value if value >= 0 else _MAX_REGEN_ATTEMPTS_DEFAULT
+
+
+def _get_int(key: str, default: int, *, minimum: int = 0) -> int:
+    raw = _get(key)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+def _get_float(key: str, default: float) -> float:
+    raw = _get(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def get_max_global_duplicate_repair_passes() -> int:
+    return _get_int(
+        "MAX_GLOBAL_DUPLICATE_REPAIR_PASSES",
+        MAX_GLOBAL_DUPLICATE_REPAIR_PASSES_DEFAULT,
+        minimum=0,
+    )
+
+
+def get_max_global_rework_attempts_per_row() -> int:
+    return _get_int(
+        "MAX_GLOBAL_REWORK_ATTEMPTS_PER_ROW",
+        MAX_GLOBAL_REWORK_ATTEMPTS_PER_ROW_DEFAULT,
+        minimum=1,
+    )
+
+
+def get_max_global_rework_rows_per_pass() -> int:
+    return _get_int(
+        "MAX_GLOBAL_REWORK_ROWS_PER_PASS",
+        MAX_GLOBAL_REWORK_ROWS_PER_PASS_DEFAULT,
+        minimum=1,
+    )
+
+
+def get_min_improvement_delta() -> float:
+    return _get_float("MIN_IMPROVEMENT_DELTA", MIN_IMPROVEMENT_DELTA_DEFAULT)
 
 
 def get_app_password() -> Optional[str]:

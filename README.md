@@ -32,16 +32,21 @@ Landing page inputs: **Skill Name**, **Skill ID / SSID**, **Topic List** (one pe
 - **Full GenPal Mode** — all 7 career levels, 40 questions each = **280 rows**.
 - **Prototype Mode** — selected levels only (default `ASE, SE`), 40 each = `selected × 40` rows.
 
-Generation runs **one career level at a time**, and within a level as five separate LLM calls following the fixed complexity distribution `Basic 5 / Intermediate 6 / Advanced 7 / Proficient 11 / Expert 11` (= 40). One LLM call never spans multiple levels.
+Generation runs **one career level at a time**, and within a level as five separate LLM calls following the fixed complexity distribution `Basic 5 / Intermediate 6 / Advanced 7 / Proficient 11 / Expert 11` (= 40). One LLM call never spans multiple levels. Each later level receives the questions from already-locked earlier levels as an *Existing Questions to Avoid* list, which reduces cross-level duplicates surfacing in the final check.
 
 ## Duplicate checks
 
 Cosine similarity on question embeddings runs twice (threshold `0.85`, configurable via `DUPLICATE_SIMILARITY_THRESHOLD`):
 
-1. **After each career level** — if any pair exceeds the threshold, findings are shown and the level is blocked until regenerated.
-2. **Final global check** across all merged rows — export is blocked until clean.
+1. **After each career level** — colliding rows are surgically regenerated; if duplicates remain after the retry budget, the level is blocked until regenerated.
+2. **Final global repair** across all merged rows — instead of simply blocking, the app automatically repairs duplicates:
+   - Duplicate pairs are grouped into **clusters** (connected components). Exact pairs (similarity `1.0`) are reworked without any extra verification.
+   - One **canonical** row (the earliest row number) is kept per cluster; the rest are reworked, rewriting **only `question`/`answer`** — every fixed field is preserved.
+   - Repair runs in **bounded passes** only (never an unbounded loop) and always ends in one of `FINAL_DUPLICATE_CHECK_PASSED`, `FINAL_MANUAL_REVIEW_REQUIRED`, or `FINAL_REPAIR_FAILED`. Titles are reassigned `1..N` after repair.
 
-Findings appear in the `Duplicate / Similar Scenario Findings` expander. The download button only appears after both checks pass, row validation passes, and the saved workbook is reopened and re-validated against the contract.
+Tunables (env-configurable): `MAX_GLOBAL_DUPLICATE_REPAIR_PASSES` (2), `MAX_GLOBAL_REWORK_ATTEMPTS_PER_ROW` (2), `MAX_GLOBAL_REWORK_ROWS_PER_PASS` (15), `MIN_IMPROVEMENT_DELTA` (0.01).
+
+Findings and rework details appear in the `Duplicate / Similar Scenario Findings` expander. The download button appears when the final check passes (or after the user confirms a **manual override** for remaining pairs), row validation passes, and the saved workbook is reopened and re-validated against the contract. A manual-override export carries a UI warning and adds **no** extra columns or sheets.
 
 ## Local setup
 
