@@ -1,6 +1,47 @@
 # GenPal Question Bank Factory — Streamlit Prototype
 
-A lightweight 3-day proof-of-concept Streamlit app for generating, deduplicating, and exporting question banks using the OpenAI API. LangSmith tracing is optional.
+A lightweight proof-of-concept Streamlit app for generating, deduplicating, and exporting question banks using the OpenAI API. LangSmith tracing is optional.
+
+## Output contract
+
+The exported workbook always has **one sheet named `Sheet1`** with **exactly these 11 lowercase columns, in this order**:
+
+```
+title, ssid, skill, topic, question_type, career_level, complexity, question, answer, options, reference_url
+```
+
+No extra, metadata, summary, validation, or hidden sheets/columns. Column rules:
+
+- **title** — assigned by the app (not the LLM): sequential `1..N` after final merge.
+- **ssid** — from the `Skill ID / SSID` input; same value on every row.
+- **skill** — exactly the entered Skill Name.
+- **topic** — only from the user Topic List, preserved exactly.
+- **question_type** — always `QnA`.
+- **career_level** — one of `ASE, SE, SSE, TL, AM, M, SM`.
+- **complexity** — one of `Basic, Intermediate, Advanced, Proficient, Expert`.
+- **question / answer** — scenario-based QnA; no MCQ, no options.
+- **options** — always blank (empty cell).
+- **reference_url** — only from the user Reference URL List, unmodified.
+
+Output filename: `<Skill Name>-<SSID>.xlsx` (e.g. `Microsoft SharePoint Server Development-80002591.xlsx`).
+
+## Inputs and modes
+
+Landing page inputs: **Skill Name**, **Skill ID / SSID**, **Topic List** (one per line), **Reference URL List** (one per line), **Career Level Control**, and **Generation Mode**.
+
+- **Full GenPal Mode** — all 7 career levels, 40 questions each = **280 rows**.
+- **Prototype Mode** — selected levels only (default `ASE, SE`), 40 each = `selected × 40` rows.
+
+Generation runs **one career level at a time**, and within a level as five separate LLM calls following the fixed complexity distribution `Basic 5 / Intermediate 6 / Advanced 7 / Proficient 11 / Expert 11` (= 40). One LLM call never spans multiple levels.
+
+## Duplicate checks
+
+Cosine similarity on question embeddings runs twice (threshold `0.85`, configurable via `DUPLICATE_SIMILARITY_THRESHOLD`):
+
+1. **After each career level** — if any pair exceeds the threshold, findings are shown and the level is blocked until regenerated.
+2. **Final global check** across all merged rows — export is blocked until clean.
+
+Findings appear in the `Duplicate / Similar Scenario Findings` expander. The download button only appears after both checks pass, row validation passes, and the saved workbook is reopened and re-validated against the contract.
 
 ## Local setup
 

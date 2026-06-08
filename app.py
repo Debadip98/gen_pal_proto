@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services import config, genpal, plan
+from services import (
+    config,
+    duplicate_detector,
+    excel_exporter,
+    generator,
+    genpal,
+    plan,
+    validators,
+)
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _password_gate() -> None:
     expected = config.get_app_password()
     if not expected:
         return
-
     if st.session_state.get("_genpal_authed"):
         return
 
@@ -42,37 +51,29 @@ def _render_sidebar_status() -> None:
         else:
             st.success("OpenAI configured")
 
+        st.caption(f"Duplicate threshold: {config.get_duplicate_similarity_threshold()}")
+
 
 def _render_header() -> None:
     st.title("GenPal Question Bank Factory - Prototype")
     st.caption("AI-assisted question bank generation for GenPal-ready Excel output.")
     st.markdown(
         "**How it works**\n"
-        "1. Enter question bank input\n"
-        "2. Generate and validate questions\n"
-        "3. Download GenPal-ready Excel"
+        "1. Enter skill, SSID, topics, and reference URLs\n"
+        "2. Generate one career level at a time with duplicate checks\n"
+        "3. Download GenPal-ready Excel (11 columns, Sheet1)"
     )
     if config.use_mock_data():
         st.info("Mock Mode is enabled. No OpenAI API calls will be made.")
     else:
-        st.success(
-            "Real API Mode is enabled. OpenAI API calls will be used for "
-            "generation and embeddings."
-        )
+        st.success("Real API Mode is enabled. OpenAI is used for generation and embeddings.")
 
 
 def _render_mode_and_levels() -> tuple[str, list[str]]:
-    mode = st.radio(
-        "Generation Mode",
-        options=plan.GENERATION_MODES,
-        index=0,
-        key="genpal_mode",
-    )
+    mode = st.radio("Generation Mode", options=plan.GENERATION_MODES, index=0, key="genpal_mode")
 
     if mode == plan.FULL_MODE:
-        st.info(
-            "Full GenPal Mode will generate all 7 career levels with 252 total questions."
-        )
+        st.info("Full GenPal Mode generates all 7 career levels × 40 = 280 questions.")
         st.multiselect(
             "Career Levels",
             options=plan.CAREER_LEVELS,
@@ -87,97 +88,266 @@ def _render_mode_and_levels() -> tuple[str, list[str]]:
             options=plan.CAREER_LEVELS,
             default=list(plan.DEFAULT_PROTOTYPE_LEVELS),
             key="genpal_levels_proto",
+            help="Each selected level generates 40 questions.",
         )
-        if len(levels) > plan.MAX_PROTOTYPE_LEVELS:
-            st.warning(
-                "Prototype mode supports a maximum of 3 career levels. "
-                "Please select up to 3 levels."
-            )
 
     return mode, levels
 
 
-def _render_input_form() -> tuple[bool, str, str, str]:
+def _render_input_form() -> tuple[bool, str, str, str, str]:
     with st.form("genpal_form"):
         skill = st.text_input(
             "Skill Name",
-            placeholder="Example: Azure DevOps, Python, Generative AI, Snowflake, SAP ABAP",
+            placeholder="Example: Microsoft SharePoint Server Development",
+        )
+        ssid = st.text_input(
+            "Skill ID / SSID",
+            placeholder="Example: 80002591",
+            help="Stored in the ssid column on every row.",
         )
         topics_raw = st.text_area(
             "Topic List",
-            help="Paste one topic per line.",
-            placeholder="Azure Repos\nAzure Pipelines\nAzure Boards\nAzure Artifacts",
+            help="Paste one topic per line. Topic names are preserved exactly.",
+            placeholder="Site Collections\nContent Types\nWorkflows\nSearch",
             height=160,
         )
         urls_raw = st.text_area(
             "Reference URL List",
             help="Paste one reference URL per line.",
             placeholder=(
-                "https://learn.microsoft.com/en-us/azure/devops/repos/\n"
-                "https://learn.microsoft.com/en-us/azure/devops/pipelines/\n"
-                "https://learn.microsoft.com/en-us/azure/devops/boards/"
+                "https://learn.microsoft.com/en-us/sharepoint/dev/\n"
+                "https://learn.microsoft.com/en-us/sharepoint/dev/general-development/"
             ),
             height=160,
         )
         submitted = st.form_submit_button("Generate Question Bank", type="primary")
-    return submitted, skill, topics_raw, urls_raw
+    return submitted, skill, ssid, topics_raw, urls_raw
 
 
-def _render_output_panel(mode: str, levels: list[str]) -> None:
+def _render_output_panel(mode: str, levels: list[str], skill: str, ssid: str,
+                         topics: list[str], urls: list[str]) -> None:
     current = plan.build_plan(mode, levels)
-    inputs = st.session_state.get("_genpal_inputs")
-
     st.subheader("Expected Output")
     with st.container(border=True):
+        st.markdown(f"**Skill Name:** {skill or '—'}")
+        st.markdown(f"**Skill ID / SSID:** {ssid or '—'}")
         st.markdown(f"**Mode:** {current.mode}")
-        st.markdown(
-            "**Selected skill:** "
-            + (inputs["skill"] if inputs else "—")
-        )
-        st.markdown(
-            "**Number of topics:** "
-            + (str(inputs["topic_count"]) if inputs else "—")
-        )
-        st.markdown(
-            "**Number of reference URLs:** "
-            + (str(inputs["url_count"]) if inputs else "—")
-        )
-        st.markdown(
-            "**Selected career levels:** "
-            + (", ".join(current.levels) if current.levels else "—")
-        )
+        st.markdown(f"**Career levels:** {', '.join(current.levels) if current.levels else '—'}")
+        st.markdown(f"**Topics provided:** {len(topics)}")
+        st.markdown(f"**Reference URLs provided:** {len(urls)}")
         st.markdown(f"**Questions per level:** {current.per_level}")
-        st.markdown(f"**Total expected questions:** {current.total_questions}")
-        st.markdown(f"**Excel sheet name:** {current.sheet_name}")
-        st.markdown(f"**Output columns:** {current.column_count}")
+        st.markdown(f"**Expected total questions:** {current.total_questions}")
+        st.markdown(f"**Duplicate threshold:** {config.get_duplicate_similarity_threshold()}")
+        st.markdown(
+            "**Output file:** "
+            + (plan.build_filename(skill, ssid) if skill and ssid else "—")
+        )
+        st.markdown(f"**Sheet:** {current.sheet_name}")
+        st.markdown(f"**Columns:** {current.column_count}")
 
 
-def _validate(
-    mode: str, levels: list[str], skill: str, topics: list[str], urls: list[str]
-) -> list[str]:
+def _validate_inputs(mode: str, levels: list[str], skill: str, ssid: str,
+                     topics: list[str], urls: list[str]) -> list[str]:
     errors: list[str] = []
-
     if not skill.strip():
-        errors.append("Please enter a skill name before generation.")
-
+        errors.append("Please enter a Skill Name.")
+    if not ssid.strip():
+        errors.append("Please enter a Skill ID / SSID.")
     if not topics:
         errors.append("Please enter at least one topic.")
-
     if not urls:
         errors.append("Please enter at least one reference URL.")
     elif not all(plan.looks_like_url(u) for u in urls):
         errors.append("URLs should look like valid HTTP/HTTPS links.")
-
-    if mode == plan.PROTOTYPE_MODE:
-        if not levels:
-            errors.append("Please select at least one career level.")
-        elif len(levels) > plan.MAX_PROTOTYPE_LEVELS:
-            errors.append(
-                "Prototype mode supports a maximum of 3 career levels. "
-                "Please select up to 3 levels."
-            )
-
+    if not levels:
+        errors.append("Please select at least one career level.")
     return errors
+
+
+def _reset_pipeline_state() -> None:
+    for key in (
+        "_genpal_locked",
+        "_genpal_level_dups",
+        "_genpal_pending_level",
+        "_genpal_pending_count",
+        "_genpal_merged",
+        "_genpal_global_dups",
+        "_genpal_errors",
+        "_genpal_xlsx",
+        "_genpal_filename",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state["_genpal_locked"] = {}
+
+
+def _run_pipeline() -> None:
+    inputs = st.session_state.get("_genpal_inputs")
+    if not inputs:
+        return
+
+    skill, ssid = inputs["skill"], inputs["ssid"]
+    topics, urls = inputs["topics"], inputs["urls"]
+    levels, total = inputs["levels"], inputs["total"]
+    threshold = config.get_duplicate_similarity_threshold()
+
+    locked: dict = st.session_state.setdefault("_genpal_locked", {})
+    # Reset transient (recomputed) state each run; keep locked levels.
+    for key in ("_genpal_level_dups", "_genpal_pending_level", "_genpal_global_dups",
+                "_genpal_errors", "_genpal_merged", "_genpal_xlsx", "_genpal_filename"):
+        st.session_state.pop(key, None)
+
+    client = generator.make_client()
+    progress = st.progress(0.0, text="Starting generation...")
+    done = 0
+
+    try:
+        for level in levels:
+            if level in locked:
+                done += 1
+                progress.progress(done / len(levels), text=f"{level}: already locked")
+                continue
+
+            def on_batch(label: str, _level=level) -> None:
+                progress.progress(done / len(levels), text=f"Generating {label}...")
+
+            rows = generator.generate_level(
+                skill, ssid, level, topics, urls, client=client, progress_cb=on_batch
+            )
+            dups = duplicate_detector.find_duplicates(rows, threshold, client=client)
+            if dups:
+                st.session_state["_genpal_level_dups"] = {level: dups}
+                st.session_state["_genpal_pending_level"] = level
+                st.session_state["_genpal_pending_count"] = len(rows)
+                progress.empty()
+                return  # block: do not continue to the next career level
+
+            locked[level] = rows
+            done += 1
+            progress.progress(done / len(levels), text=f"{level}: locked ({len(rows)} rows)")
+
+        # All selected levels are locked — merge, title, global check, validate, export.
+        merged = genpal.finalize(genpal.merge_locked_levels(locked, levels))
+        st.session_state["_genpal_merged"] = merged
+
+        gdups = duplicate_detector.find_duplicates(merged, threshold, client=client)
+        if gdups:
+            st.session_state["_genpal_global_dups"] = gdups
+            progress.empty()
+            return  # block export
+
+        row_errors = validators.validate_rows(
+            merged, skill, ssid, topics, urls, expected_count=total
+        )
+        if row_errors:
+            st.session_state["_genpal_errors"] = row_errors
+            progress.empty()
+            return
+
+        xlsx = excel_exporter.to_xlsx_bytes(merged)
+        post_errors = excel_exporter.validate_workbook(xlsx, ssid, total)
+        if post_errors:
+            st.session_state["_genpal_errors"] = post_errors
+            progress.empty()
+            return
+
+        st.session_state["_genpal_xlsx"] = xlsx
+        st.session_state["_genpal_filename"] = plan.build_filename(skill, ssid)
+    except Exception as exc:  # surface API/generation errors without crashing
+        st.session_state["_genpal_errors"] = [f"Generation failed: {exc}"]
+    finally:
+        progress.empty()
+
+
+def _render_duplicate_findings(findings: list[dict]) -> None:
+    with st.expander("Duplicate / Similar Scenario Findings", expanded=True):
+        st.warning(f"{len(findings)} similar pair(s) above the threshold.")
+        for f in findings:
+            st.markdown(
+                f"- **Rows {f['row1']} & {f['row2']}** · "
+                f"{f['career_level1']}/{f['complexity1']} vs "
+                f"{f['career_level2']}/{f['complexity2']} · "
+                f"similarity **{f['similarity']}**"
+            )
+            st.caption(f"Q{f['row1']}: {f['question1']}")
+            st.caption(f"Q{f['row2']}: {f['question2']}")
+
+
+def _render_results() -> None:
+    inputs = st.session_state.get("_genpal_inputs")
+    if not inputs:
+        return
+
+    levels = inputs["levels"]
+    locked = st.session_state.get("_genpal_locked", {})
+    level_dups = st.session_state.get("_genpal_level_dups", {})
+    pending_level = st.session_state.get("_genpal_pending_level")
+    global_dups = st.session_state.get("_genpal_global_dups")
+    errors = st.session_state.get("_genpal_errors")
+    xlsx = st.session_state.get("_genpal_xlsx")
+    merged = st.session_state.get("_genpal_merged")
+
+    st.divider()
+    st.subheader("Generation progress")
+    for level in levels:
+        if level in locked:
+            st.markdown(f"- {level}: locked ✓ ({len(locked[level])} rows)")
+        elif level == pending_level:
+            st.markdown(f"- {level}: blocked — duplicates found")
+        else:
+            st.markdown(f"- {level}: pending")
+
+    # Per-level duplicate block (Check 1).
+    if pending_level and level_dups.get(pending_level):
+        st.error(
+            f"Career level {pending_level} has similar questions. "
+            "Resolve before continuing to the next level."
+        )
+        _render_duplicate_findings(level_dups[pending_level])
+        if st.button(f"Regenerate {pending_level}", key="regen_level"):
+            st.session_state["_genpal_should_run"] = True
+            st.rerun()
+        return
+
+    # Global duplicate block (Check 2).
+    if global_dups:
+        st.error("Final 280-row check found similar questions. Export is blocked.")
+        _render_duplicate_findings(global_dups)
+        if st.button("Clear all levels and regenerate", key="regen_global"):
+            _reset_pipeline_state()
+            st.session_state["_genpal_should_run"] = True
+            st.rerun()
+        return
+
+    # Validation / post-export errors.
+    if errors:
+        st.error("Validation failed. Export is blocked.")
+        for message in errors[:50]:
+            st.warning(message)
+        if len(errors) > 50:
+            st.caption(f"... and {len(errors) - 50} more.")
+        if st.button("Clear all levels and regenerate", key="regen_errors"):
+            _reset_pipeline_state()
+            st.session_state["_genpal_should_run"] = True
+            st.rerun()
+        return
+
+    # Success — download available.
+    if xlsx and merged:
+        st.success(f"All checks passed. {len(merged)} questions ready.")
+        st.download_button(
+            "Download GenPal Excel (.xlsx)",
+            data=xlsx,
+            file_name=st.session_state.get("_genpal_filename", "genpal_question_bank.xlsx"),
+            mime=XLSX_MIME,
+            type="primary",
+        )
+        st.caption(
+            f"File: {st.session_state.get('_genpal_filename')} · "
+            f"Sheet: {plan.EXCEL_SHEET_NAME} · Columns: {plan.EXCEL_COLUMN_COUNT}"
+        )
+        st.dataframe(merged[:50], use_container_width=True, hide_index=True)
+        if len(merged) > 50:
+            st.caption(f"Showing first 50 of {len(merged)} rows. Download for the full bank.")
 
 
 def main() -> None:
@@ -185,22 +355,28 @@ def main() -> None:
     _password_gate()
     _render_sidebar_status()
 
+    # Run the pipeline once if a submit/regenerate action requested it.
+    if st.session_state.pop("_genpal_should_run", False):
+        _run_pipeline()
+
     _render_header()
     st.divider()
 
     left, right = st.columns([2, 1])
     with left:
         mode, levels = _render_mode_and_levels()
-        submitted, skill, topics_raw, urls_raw = _render_input_form()
+        submitted, skill, ssid, topics_raw, urls_raw = _render_input_form()
         status_area = st.container()
     with right:
-        panel_area = st.container()
+        topics_preview = plan.parse_lines(topics_raw)
+        urls_preview = plan.parse_lines(urls_raw)
+        _render_output_panel(mode, levels, skill.strip(), ssid.strip(),
+                             topics_preview, urls_preview)
 
     if submitted:
         topics = plan.parse_lines(topics_raw)
         urls = plan.parse_lines(urls_raw)
-        errors = _validate(mode, levels, skill, topics, urls)
-
+        errors = _validate_inputs(mode, levels, skill, ssid, topics, urls)
         if errors:
             with status_area:
                 st.error("Please fix the following before generating:")
@@ -208,66 +384,20 @@ def main() -> None:
                     st.warning(message)
         else:
             resolved = plan.build_plan(mode, levels)
+            _reset_pipeline_state()
             st.session_state["_genpal_inputs"] = {
                 "skill": skill.strip(),
+                "ssid": ssid.strip(),
                 "topics": topics,
-                "topic_count": len(topics),
                 "urls": urls,
-                "url_count": len(urls),
                 "mode": resolved.mode,
                 "levels": resolved.levels,
-                "total_questions": resolved.total_questions,
+                "total": resolved.total_questions,
             }
-            with status_area:
-                st.success("Ready to generate.")
-                _run_generation(skill.strip(), topics, urls, mode, levels)
-
-    with panel_area:
-        _render_output_panel(mode, levels)
+            st.session_state["_genpal_should_run"] = True
+            st.rerun()
 
     _render_results()
-
-
-def _run_generation(
-    skill: str, topics: list[str], urls: list[str], mode: str, levels: list[str]
-) -> None:
-    progress = st.progress(0.0, text="Generating question bank...")
-
-    def on_progress(done: int, total: int) -> None:
-        progress.progress(done / total, text=f"Generating... batch {done} of {total}")
-
-    try:
-        records = genpal.generate_question_bank(
-            skill, topics, urls, mode, levels, progress_cb=on_progress
-        )
-    except Exception as exc:  # surface generation/API errors without crashing
-        progress.empty()
-        st.error(f"Generation failed: {exc}")
-        return
-
-    progress.empty()
-    st.session_state["_genpal_records"] = records
-    st.session_state["_genpal_xlsx"] = genpal.to_xlsx_bytes(records)
-
-
-def _render_results() -> None:
-    records = st.session_state.get("_genpal_records")
-    if not records:
-        return
-
-    st.divider()
-    st.subheader(f"Generated question bank ({len(records)} questions)")
-    st.download_button(
-        "Download GenPal Excel (.xlsx)",
-        data=st.session_state["_genpal_xlsx"],
-        file_name="genpal_question_bank.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
-    )
-    st.caption(f"Sheet: {plan.EXCEL_SHEET_NAME} · Columns: {len(genpal.GENPAL_COLUMNS)}")
-    st.dataframe(records[:50], use_container_width=True, hide_index=True)
-    if len(records) > 50:
-        st.caption(f"Showing first 50 of {len(records)} rows. Download for the full bank.")
 
 
 if __name__ == "__main__":
