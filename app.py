@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services import config
+from services import config, dedup, export, generation
 
 
 def _password_gate() -> None:
@@ -63,8 +63,92 @@ def main() -> None:
     st.title("GenPal Question Bank Factory")
     st.write(
         "Streamlit prototype for generating, deduplicating, and exporting question banks. "
-        "Upload flows and generation controls will plug into this skeleton."
+        "Enter a prompt below to generate short-answer questions."
     )
+
+    _render_generation()
+
+
+def _render_generation() -> None:
+    with st.form("generation_form"):
+        prompt = st.text_area(
+            "Prompt / instructions",
+            placeholder="e.g. Generate short-answer questions on the causes of World War I "
+            "for a high-school history exam.",
+            height=140,
+        )
+        col_count, col_difficulty = st.columns(2)
+        with col_count:
+            count = st.number_input(
+                "Number of questions", min_value=1, max_value=50, value=5, step=1
+            )
+        with col_difficulty:
+            difficulty = st.selectbox(
+                "Difficulty", options=generation.VALID_DIFFICULTIES, index=1
+            )
+        submitted = st.form_submit_button("Generate questions")
+
+    if submitted:
+        if not prompt.strip():
+            st.warning("Please enter a prompt before generating.")
+            return
+        try:
+            with st.spinner("Generating questions..."):
+                questions = generation.generate_questions(
+                    prompt=prompt, count=int(count), difficulty=difficulty
+                )
+            st.session_state["_genpal_questions"] = [q.to_dict() for q in questions]
+            st.session_state.pop("_genpal_removed", None)
+        except Exception as exc:  # surface generation/API errors without crashing
+            st.error(f"Generation failed: {exc}")
+            return
+
+    _render_results()
+
+
+def _render_results() -> None:
+    questions = st.session_state.get("_genpal_questions")
+    if not questions:
+        return
+
+    st.subheader(f"Generated questions ({len(questions)})")
+    if st.button("Remove duplicates"):
+        try:
+            with st.spinner("Checking for duplicates..."):
+                result = dedup.deduplicate(questions)
+            st.session_state["_genpal_questions"] = result.kept
+            st.session_state["_genpal_removed"] = result.removed
+            st.rerun()
+        except Exception as exc:  # surface embedding/API errors without crashing
+            st.error(f"Deduplication failed: {exc}")
+
+    col_xlsx, col_csv = st.columns(2)
+    with col_xlsx:
+        st.download_button(
+            "Download Excel (.xlsx)",
+            data=export.to_xlsx_bytes(questions),
+            file_name="question_bank.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    with col_csv:
+        st.download_button(
+            "Download CSV",
+            data=export.to_csv_bytes(questions),
+            file_name="question_bank.csv",
+            mime="text/csv",
+        )
+
+    removed = st.session_state.get("_genpal_removed")
+    if removed:
+        st.info(f"Removed {len(removed)} duplicate question(s).")
+        with st.expander("Show removed duplicates"):
+            for q in removed:
+                st.markdown(f"- {q['question']}")
+
+    for i, q in enumerate(questions, start=1):
+        with st.expander(f"Q{i}. {q['question']}"):
+            st.markdown(f"**Answer:** {q['answer']}")
+            st.caption(f"Difficulty: {q['difficulty']}")
 
 
 if __name__ == "__main__":
