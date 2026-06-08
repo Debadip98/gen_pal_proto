@@ -1,0 +1,6 @@
+streamlit
+openai
+openpyxl
+langsmith
+numpy
+python-dotenv
