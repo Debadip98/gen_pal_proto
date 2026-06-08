@@ -73,19 +73,16 @@ def generate_level(
     *,
     client=None,
     progress_cb: ProgressCallback = None,
-    avoid_questions: Optional[list[str]] = None,
 ) -> list[dict]:
     """Generate exactly 40 rows for one career level as five complexity batches.
 
-    ``avoid_questions`` lists question texts the model must not repeat or
-    paraphrase. It is populated on regeneration after a duplicate check fails,
-    steering the model toward distinct scenarios instead of blocking the run.
+    Duplicates are not avoided here; they are cleared afterward by surgically
+    regenerating only the colliding rows (see ``regenerate_rows``).
     """
     skill = (skill or "").strip()
     ssid = (ssid or "").strip()
     topics = [t.strip() for t in topics if t and t.strip()]
     urls = [u.strip() for u in urls if u and u.strip()]
-    avoid = [q.strip() for q in (avoid_questions or []) if q and q.strip()]
 
     use_mock = config.use_mock_data()
     if not use_mock and client is None:
@@ -99,12 +96,72 @@ def generate_level(
             items = _mock_items(skill, level, complexity, count, topics, urls)
         else:
             items = _openai_items(
-                client, skill, level, complexity, count, topics, urls, avoid
+                client, skill, level, complexity, count, topics, urls
             )
         rows.extend(
             _build_rows(items, skill, ssid, level, complexity, count, topics, urls)
         )
     return rows
+
+
+@traceable(run_type="chain", name="regenerate_rows")
+def regenerate_rows(
+    rows: list[dict],
+    indices: list[int],
+    *,
+    topics: list[str],
+    urls: list[str],
+    avoid: list[str],
+    client=None,
+    progress_cb: ProgressCallback = None,
+) -> None:
+    """Replace the question content of ``rows[i]`` for each i in ``indices``, in place.
+
+    Used to clear duplicates surgically: instead of regenerating a whole 40-row
+    career level, only the specific colliding rows are re-asked. Rows are grouped
+    by (career_level, complexity) so each LLM call regenerates a homogeneous
+    batch. skill / ssid / career_level / complexity / question_type / options are
+    preserved; only topic / question / answer / reference_url are overwritten.
+    ``avoid`` lists question texts the new questions must steer away from.
+    """
+    indices = sorted({i for i in indices if 0 <= i < len(rows)})
+    if not indices:
+        return
+
+    topics = [t.strip() for t in topics if t and t.strip()]
+    urls = [u.strip() for u in urls if u and u.strip()]
+    avoid = [q.strip() for q in (avoid or []) if q and q.strip()]
+
+    use_mock = config.use_mock_data()
+    if not use_mock and client is None:
+        client = make_client()
+
+    groups: dict[tuple[str, str], list[int]] = {}
+    for i in indices:
+        key = (rows[i].get("career_level", ""), rows[i].get("complexity", ""))
+        groups.setdefault(key, []).append(i)
+
+    for (level, complexity), idxs in groups.items():
+        skill = rows[idxs[0]].get("skill", "")
+        count = len(idxs)
+        if progress_cb:
+            progress_cb(f"regenerating {count} question(s) · {level}/{complexity}")
+        if use_mock:
+            items = _mock_items(skill, level, complexity, count, topics, urls)
+        else:
+            items = _openai_items(
+                client, skill, level, complexity, count, topics, urls, avoid
+            )
+        for pos, i in enumerate(idxs):
+            item = items[pos] if pos < len(items) else {}
+            question = str(item.get("question", "")).strip()
+            answer = str(item.get("answer", "")).strip()
+            if not question or not answer:
+                continue  # keep the existing row if regeneration produced nothing usable
+            rows[i]["topic"] = _pick(item.get("topic"), topics)
+            rows[i]["question"] = question
+            rows[i]["answer"] = answer
+            rows[i]["reference_url"] = _pick(item.get("reference_url"), urls)
 
 
 def _build_rows(

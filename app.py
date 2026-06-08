@@ -6,7 +6,6 @@ import streamlit as st
 
 from services import (
     config,
-    duplicate_detector,
     excel_exporter,
     generator,
     genpal,
@@ -211,27 +210,20 @@ def _run_pipeline() -> None:
             def on_batch(label: str, _level=level) -> None:
                 progress.progress(done / len(levels), text=f"Generating {label}...")
 
-            # Generate the level, then auto-regenerate (feeding the duplicate
-            # questions back into the prompt) until the per-level duplicate
-            # check passes or the retry budget is spent. Only then do we block.
-            rows: list[dict] = []
-            dups: list[dict] = []
-            for attempt in range(max_regen + 1):
-                if attempt > 0:
-                    progress.progress(
-                        done / len(levels),
-                        text=f"{level}: duplicates found — regenerating "
-                        f"(attempt {attempt}/{max_regen})...",
-                    )
-                avoid = [d["question1"] for d in dups] + [d["question2"] for d in dups]
-                rows = generator.generate_level(
-                    skill, ssid, level, topics, urls,
-                    client=client, progress_cb=on_batch,
-                    avoid_questions=avoid,
-                )
-                dups = duplicate_detector.find_duplicates(rows, threshold, client=client)
-                if not dups:
-                    break
+            # Generate the level once, then surgically regenerate only the
+            # colliding rows (feeding every existing question back as an avoid
+            # list) until the per-level duplicate check passes or the retry
+            # budget is spent. Only then do we block.
+            rows = generator.generate_level(
+                skill, ssid, level, topics, urls,
+                client=client, progress_cb=on_batch,
+            )
+            rows, dups = genpal.resolve_internal_duplicates(
+                rows, threshold,
+                topics=topics, urls=urls, client=client, max_attempts=max_regen,
+                progress_cb=lambda msg, _l=level: progress.progress(
+                    done / len(levels), text=f"{_l}: {msg}..."),
+            )
 
             if dups:
                 st.session_state["_genpal_level_dups"] = {level: dups}
@@ -245,14 +237,22 @@ def _run_pipeline() -> None:
             progress.progress(done / len(levels), text=f"{level}: locked ({len(rows)} rows)")
 
         # All selected levels are locked — merge, title, global check, validate, export.
+        # The merged rows are the same dict objects held in ``locked`` (order_and_title
+        # mutates in place), so surgically regenerating a duplicate row here also
+        # updates the corresponding locked level — no extra bookkeeping needed.
         merged = genpal.finalize(genpal.merge_locked_levels(locked, levels))
+        merged, gdups = genpal.resolve_internal_duplicates(
+            merged, threshold,
+            topics=topics, urls=urls, client=client, max_attempts=max_regen,
+            progress_cb=lambda msg: progress.progress(
+                done / len(levels), text=f"final 280-row check: {msg}..."),
+        )
         st.session_state["_genpal_merged"] = merged
 
-        gdups = duplicate_detector.find_duplicates(merged, threshold, client=client)
         if gdups:
             st.session_state["_genpal_global_dups"] = gdups
             progress.empty()
-            return  # block export
+            return  # block export only if surgical regeneration could not resolve
 
         row_errors = validators.validate_rows(
             merged, skill, ssid, topics, urls, expected_count=total
