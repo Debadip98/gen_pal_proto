@@ -4,3 +4,5 @@ openpyxl
 langsmith
 numpy
 python-dotenv
+pypdf
+python-docx

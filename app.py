@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services import config, dedup, export, generation
+from services import config, dedup, export, generation, ingest
 
 
 def _password_gate() -> None:
@@ -63,7 +63,7 @@ def main() -> None:
     st.title("GenPal Question Bank Factory")
     st.write(
         "Streamlit prototype for generating, deduplicating, and exporting question banks. "
-        "Enter a prompt below to generate short-answer questions."
+        "Enter a prompt and/or upload source material to generate short-answer questions."
     )
 
     _render_generation()
@@ -77,6 +77,12 @@ def _render_generation() -> None:
             "for a high-school history exam.",
             height=140,
         )
+        uploaded = st.file_uploader(
+            "Source material (optional)",
+            type=list(ingest.SUPPORTED_EXTENSIONS),
+            help="Upload a document to ground the questions in its content. "
+            "Supported: " + ", ".join("." + e for e in ingest.SUPPORTED_EXTENSIONS),
+        )
         col_count, col_difficulty = st.columns(2)
         with col_count:
             count = st.number_input(
@@ -89,15 +95,31 @@ def _render_generation() -> None:
         submitted = st.form_submit_button("Generate questions")
 
     if submitted:
-        if not prompt.strip():
-            st.warning("Please enter a prompt before generating.")
+        source_text = ""
+        if uploaded is not None:
+            try:
+                source_text = ingest.extract_text(uploaded.name, uploaded.getvalue())
+            except Exception as exc:  # surface extraction errors without crashing
+                st.error(f"Could not read uploaded file: {exc}")
+                return
+            if not source_text.strip():
+                st.warning("No readable text found in the uploaded file.")
+                return
+
+        if not prompt.strip() and not source_text:
+            st.warning("Enter a prompt or upload source material before generating.")
             return
+
         try:
             with st.spinner("Generating questions..."):
                 questions = generation.generate_questions(
-                    prompt=prompt, count=int(count), difficulty=difficulty
+                    prompt=prompt,
+                    count=int(count),
+                    difficulty=difficulty,
+                    source_text=source_text,
                 )
             st.session_state["_genpal_questions"] = [q.to_dict() for q in questions]
+            st.session_state["_genpal_grounded"] = bool(source_text)
             st.session_state.pop("_genpal_removed", None)
         except Exception as exc:  # surface generation/API errors without crashing
             st.error(f"Generation failed: {exc}")
@@ -112,6 +134,8 @@ def _render_results() -> None:
         return
 
     st.subheader(f"Generated questions ({len(questions)})")
+    if st.session_state.get("_genpal_grounded"):
+        st.caption("Grounded in uploaded source material.")
     if st.button("Remove duplicates"):
         try:
             with st.spinner("Checking for duplicates..."):
