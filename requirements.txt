@@ -3,3 +3,8 @@ openai
 openpyxl
 langsmith
 python-dotenv
+fastapi
+uvicorn[standard]
+sqlalchemy
+httpx
+python-multipart

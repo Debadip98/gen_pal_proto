@@ -1,3 +1,4 @@
+
 """Configuration helper for the GenPal Streamlit prototype.
 
 Resolution order for every key:
