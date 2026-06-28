@@ -10,11 +10,14 @@ Secrets are never printed, logged, or returned in API responses.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 
-load_dotenv(override=False)
+# Walk up from backend/core/ to the project root to find .env
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
 _GENERATION_MODEL_DEFAULT = "gpt-4o"
 _EMBEDDING_MODEL_DEFAULT = "text-embedding-3-small"
@@ -203,7 +206,7 @@ def get_app_base_url() -> str:
 
 
 def get_backend_url() -> str:
-    return _get("BACKEND_URL", "http://localhost:8000") or "http://localhost:8000"
+    return _get("BACKEND_URL", "http://localhost:8080") or "http://localhost:8080"
 
 
 def get_email_provider() -> str:
