@@ -219,7 +219,8 @@ def get_smtp_port() -> int:
 
 
 def get_smtp_username() -> Optional[str]:
-    return _get("SMTP_USERNAME")
+    # Accept both SMTP_USER (legacy .env) and SMTP_USERNAME
+    return _get("SMTP_USER") or _get("SMTP_USERNAME")
 
 
 def get_smtp_password() -> Optional[str]:
