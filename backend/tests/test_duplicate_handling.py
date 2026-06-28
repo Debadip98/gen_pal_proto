@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from backend.services.duplicate_detector import find_duplicates
 from backend.services.rework import build_duplicate_clusters

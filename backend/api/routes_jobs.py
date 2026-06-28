@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db
-from backend.core import config, constants
+from backend.core import constants
 from backend.core.security import generate_id, generate_job_token
 from backend.db.models import CareerLevelRequest, Job, Question
 from backend.pipeline.runner import run_generation_pipeline

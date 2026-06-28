@@ -1,0 +1,64 @@
+name: CI / CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff pytest
+
+      - name: Lint (ruff — backend only)
+        run: ruff check backend/ --output-format=github
+
+      - name: Run unit tests
+        run: pytest backend/tests/ -v --tb=short
+        env:
+          USE_MOCK_DATA: "true"
+          DATABASE_URL: "sqlite:///./ci_test.db"
+
+      - name: API smoke test
+        run: |
+          USE_MOCK_DATA=true DATABASE_URL=sqlite:///./ci_smoke.db \
+            uvicorn backend.main:app --port 8000 &
+          sleep 5
+          curl -sf http://localhost:8000/api/v1/health \
+            | python -c "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', d"
+          echo "Health check passed"
+        env:
+          USE_MOCK_DATA: "true"
+          DATABASE_URL: "sqlite:///./ci_smoke.db"
+
+  deploy:
+    name: Deploy to Railway
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy backend service
+        run: railway up --service genpal-backend --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

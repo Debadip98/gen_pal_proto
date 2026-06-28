@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.core import constants
 from backend.db.database import Base
 from backend.db.models import (
-    Job, Question, QuestionVersion, ReviewSession, Notification,
+    Job, Question, Notification,
 )
 from backend.core.security import generate_id, generate_review_token
 from backend.services import review_service

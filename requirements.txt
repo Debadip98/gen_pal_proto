@@ -8,3 +8,4 @@ uvicorn[standard]
 sqlalchemy
 httpx
 python-multipart
+psycopg2-binary

@@ -9,6 +9,7 @@ Opens its own DB session (SQLite thread-safety with check_same_thread=False).
 from __future__ import annotations
 
 import json
+import traceback as _traceback
 from datetime import datetime
 from typing import Optional
 
@@ -37,12 +38,12 @@ def run_generation_pipeline(job_id: str) -> None:
     db = SessionLocal()
     try:
         _run(db, job_id)
-    except Exception as exc:
+    except Exception:
         try:
             job = db.query(Job).filter_by(job_id=job_id).first()
             if job:
                 job.status = constants.JobStatus.FAILED
-                job.error_message = str(exc)[:1000]
+                job.error_message = _traceback.format_exc()[:2000]
                 job.updated_at = datetime.utcnow()
                 db.commit()
         except Exception:
@@ -83,7 +84,7 @@ def _run(db, job_id: str) -> None:
         question_count = level_req.question_count
 
         existing_questions = [
-            q.question
+            q["question"]
             for rows in level_rows.values()
             for q in rows
         ] if level_rows else []

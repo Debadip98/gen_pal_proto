@@ -7,7 +7,6 @@ Stores discovered URLs as DocumentSource rows.
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from backend.core import config
 from backend.core.security import generate_id

@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db
-from backend.core.security import generate_id
 from backend.db.models import DocumentSource, Job
 from backend.schemas.docs import (
     DiscoverDocsResponse,

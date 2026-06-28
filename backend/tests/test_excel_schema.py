@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 
 import openpyxl
-import pytest
 
 from backend.core.constants import GENPAL_COLUMNS, EXCEL_SHEET_NAME
 from backend.services.excel_exporter import order_and_title, to_xlsx_bytes

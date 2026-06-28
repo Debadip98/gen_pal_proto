@@ -14,11 +14,9 @@ from backend.core.security import generate_review_token
 from backend.db.models import Job, Notification, Question, QuestionVersion, ReviewSession
 from backend.schemas.questions import QuestionSchema, QuestionVersionSchema
 from backend.schemas.review import (
-    AcceptQuestionRequest,
     RegenerateQuestionRequest,
     RejectQuestionRequest,
     SendSMEReviewResponse,
-    SuggestionResponse,
 )
 from backend.services import (
     document_context,

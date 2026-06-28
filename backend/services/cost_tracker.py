@@ -6,7 +6,7 @@ Intercepts OpenAI response.usage objects and records CostEvent rows.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable
 
 from backend.core import config
 from backend.core.security import generate_id
@@ -84,7 +84,6 @@ def make_cost_sink(job_id: str, db) -> Callable:
 def get_cost_summary(db, job_id: str) -> dict:
     """Return aggregated cost summary for a job."""
     from backend.db.models import CostEvent
-    from sqlalchemy import func
 
     events = db.query(CostEvent).filter_by(job_id=job_id).all()
 

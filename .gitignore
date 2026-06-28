@@ -1,6 +1,10 @@
 .env
 *.xlsx
+*.db
 __pycache__/
 *.pyc
+*.pyo
 .streamlit/secrets.toml
 .DS_Store
+.venv/
+venv/

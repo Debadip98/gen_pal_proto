@@ -191,7 +191,11 @@ def get_review_token_expiry_hours() -> int:
 
 
 def get_database_url() -> str:
-    return _get("DATABASE_URL", "sqlite:///./genpal_prototype.db") or "sqlite:///./genpal_prototype.db"
+    url = _get("DATABASE_URL", "sqlite:///./genpal_prototype.db") or "sqlite:///./genpal_prototype.db"
+    # Railway provides postgres:// which SQLAlchemy 1.4+ requires as postgresql://
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    return url
 
 
 def get_app_base_url() -> str:
