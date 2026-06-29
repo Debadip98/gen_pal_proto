@@ -7,6 +7,7 @@ but can be overridden via the BACKEND_URL environment variable.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -16,9 +17,10 @@ except ImportError:
     _HAS_HTTPX = False
 
 from dotenv import load_dotenv
-load_dotenv(override=False)
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+load_dotenv(Path(__file__).parent / ".env", override=True)
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080").rstrip("/")
 API = f"{BACKEND_URL}/api/v1"
 TIMEOUT = 600  # seconds — generation can take a while
 
