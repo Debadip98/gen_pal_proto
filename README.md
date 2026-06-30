@@ -1,40 +1,35 @@
 # GenPal Question Bank Factory
 
 AI-assisted generation, de-duplication, SME review, and GenPal-ready Excel export
-of role-based question banks. Built with a **FastAPI** backend and a **static
-HTML/CSS/JavaScript** frontend served by **Apache HTTPD**.
+of role-based question banks. Built with a **FastAPI** backend that also serves a
+**static HTML/CSS/JavaScript** frontend — the whole app runs from **one URL** for
+local demos. No Streamlit, no Apache, no reverse proxy required.
 
-> **Note on Streamlit:** Streamlit was used for the early prototype only. The
-> current local demo does **not** use Streamlit. The old UI is retained for
-> reference as `app_streamlit_legacy.py` / `api_client_streamlit_legacy.py` and
-> is excluded from the run instructions below.
+> **Note on Streamlit:** Streamlit was used for the early prototype only and is
+> not part of the runtime (archived as `app_streamlit_legacy.py` /
+> `api_client_streamlit_legacy.py`).
 
-## Architecture
+## Architecture (local demo)
 
 ```
-Browser ──▶ http://localhost:8080/              (static HTML/CSS/JS via Apache)
-        └─▶ http://localhost:8080/api/v1/...     ──proxy──▶ http://127.0.0.1:8000/api/v1/...
-                                                                (FastAPI / Uvicorn)
+Browser ──▶ http://127.0.0.1:8000/            (static HTML/CSS/JS, served by FastAPI)
+        └─▶ http://127.0.0.1:8000/api/v1/...   (same FastAPI app — no proxy)
 ```
 
-- **Apache HTTPD** serves the static frontend from `frontend/public/` and
-  reverse-proxies `/api/*` to FastAPI. The browser only ever calls Apache, so
-  the frontend uses relative API paths and there are no CORS issues.
-- **FastAPI** exposes all endpoints under `/api/v1` and handles question
-  generation, duplicate detection, the SME review workflow, Excel export, cost
-  tracking, and SQLite persistence.
+- **FastAPI** serves the frontend from `frontend/public/` *and* exposes every API
+  under `/api/v1` on the same origin. The frontend calls **relative** `/api/v1`
+  paths, so there is no cross-origin or connection-refused class of error.
+- Handles question generation (mock or OpenAI), duplicate detection, SME review,
+  Excel export, cost tracking, and SQLite persistence.
+- **Apache is optional** (`deploy/apache/`) for a proxy-style setup, but the
+  local demo does not need it.
 
 ```
 genpal_prototype/
   backend/            FastAPI app (api/, core/, db/, schemas/, services/, pipeline/)
-  frontend/
-    public/           Served by Apache (index.html, css/, js/, js/pages/)
-    src/              Original React/TS source (reference only; not in run path)
-  deploy/
-    apache/           genpal-httpd.conf + README_APACHE_LOCAL.md
-    scripts/          run_backend.bat, build_frontend.bat, copy_frontend_to_apache.bat
-  app_streamlit_legacy.py        LEGACY (not used)
-  api_client_streamlit_legacy.py LEGACY (not used)
+  frontend/public/    Served by FastAPI (index.html, css/, js/, js/pages/)
+  scripts/            run_local.bat, smoke_test.bat
+  deploy/apache/      Optional Apache reverse-proxy setup
 ```
 
 ## Output contract
@@ -65,68 +60,38 @@ feedback, LLM suggestions) is shown in the UI only and is **never** exported.
 ## Prerequisites
 
 - **Python 3.10+**
-- **Apache HTTPD 2.4+** (Windows: [Apache Lounge](https://www.apachelounge.com/) or [XAMPP](https://www.apachefriends.org/))
-- An **OpenAI API key** — only required when not using mock mode.
+- An **OpenAI API key** — only required when *not* using mock mode.
 
-## Setup
-
-### 1. Install backend dependencies
+## Quick start (local demo — one URL)
 
 ```bat
+:: 1. Create + activate a virtual environment
 python -m venv .venv
 .venv\Scripts\activate
+
+:: 2. Install dependencies
 pip install -r requirements.txt
-```
 
-### 2. Configure environment
-
-```bat
+:: 3. Create your env file (defaults are demo-ready: USE_MOCK_DATA=true)
 copy .env.example .env
-```
 
-Edit `.env`. For a no-cost demo, leave `OPENAI_API_KEY` blank and keep
-`USE_MOCK_DATA=true`. Keep `APP_BASE_URL=http://localhost:8080` so SME review
-links point at the Apache-hosted frontend.
-
-### 3. Run the FastAPI backend (Terminal 1)
-
-```bat
-deploy\scripts\run_backend.bat
-```
-
-or manually:
-
-```bat
+:: 4. Run the app (serves API + frontend on one port)
 python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### 4. Configure Apache HTTPD
+Or just double-click **`scripts\run_local.bat`**.
 
-1. Enable modules in `httpd.conf`: `mod_proxy`, `mod_proxy_http`, `mod_headers`,
-   `mod_rewrite`.
-2. In `deploy/apache/genpal-httpd.conf`, set `Define GENPAL_ROOT` to your
-   checkout path (forward slashes).
-3. Include it from `httpd.conf`:
-   `Include "C:/.../Genpal_prototype/deploy/apache/genpal-httpd.conf"`
+Then:
 
-Full details + troubleshooting: `deploy/apache/README_APACHE_LOCAL.md`.
+- **Open the app:** <http://127.0.0.1:8000>
+- **Health check:** <http://127.0.0.1:8000/api/v1/health> → `{"status":"ok","service":"genpal-question-bank-api","mock_mode":true}`
+- **API docs:** <http://127.0.0.1:8000/docs>
+- **Smoke test:** `scripts\smoke_test.bat`
 
-### 5. Start / restart Apache
-
-**One-click (recommended):** `deploy\scripts\run_apache.bat` — it fills the
-machine-specific paths into `deploy/apache/genpal-runtime.conf.template`, writes
-a self-contained config into your Apache `conf\` dir, validates it, and starts
-httpd on port 8080. It defaults to an Apache install at `%USERPROFILE%\Apache24`;
-override with `set APACHE_HOME=C:\Apache24` first if yours lives elsewhere.
-
-Manual alternative:
-- Apache Lounge: `httpd -k restart` (validate first with `httpd -t`)
-- XAMPP: Stop, then Start, Apache in the control panel.
-
-### 6. Open the app
-
-- Frontend: <http://localhost:8080>
-- Health through Apache: <http://localhost:8080/api/v1/health> → `{"status":"ok",...}`
+For the demo, keep `USE_MOCK_DATA=true` and leave `OPENAI_API_KEY` blank — no
+billing, no external calls. The app runs even if `.env` is missing (safe
+defaults). Apache is **not** required; see `deploy/apache/` only if you want the
+optional reverse-proxy setup.
 
 ## Mock mode vs. real API mode
 
@@ -179,13 +144,13 @@ the SME interface automatically.
 
 | Symptom | Cause / Fix |
 |---|---|
-| Frontend can't reach API / network error | FastAPI not running. Start `deploy\scripts\run_backend.bat`. |
-| `502 Proxy Error` | Backend down or wrong port. Confirm Uvicorn on `127.0.0.1:8000`. |
-| `/api/v1/health` returns Apache 404 | `mod_proxy`/`mod_proxy_http` not enabled, or `ProxyPass` missing. |
-| CORS error in console | You bypassed Apache. Always browse via `http://localhost:8080`. |
-| `AH00526` duplicate `Listen` | Remove the extra `Listen 8080` from `httpd.conf`. |
-| Excel "download" shows JSON/text | The export request didn't reach the proxied backend endpoint. |
-| JS changes not reflected | Hard-refresh (Ctrl+F5) to bust the module cache. |
+| `[WinError 10061] ... actively refused it` | The backend isn't running. Start it (`scripts\run_local.bat`) and browse to `http://127.0.0.1:8000` — the same server serves the page and the API. |
+| Header shows **Backend offline** | Same as above — start the server, then refresh. |
+| `[Errno 10048] address already in use` / port in use | Another process holds `:8000`. Stop it, or run on another port: `uvicorn backend.main:app --port 8010` (then open that port). |
+| `.env` missing | App still runs with safe defaults (mock mode). Copy `.env.example` to `.env` to customize. |
+| `OPENAI_API_KEY is missing` error | You set `USE_MOCK_DATA=false` without a key. Set `USE_MOCK_DATA=true` for the demo, or add the key. |
+| Excel "download" shows JSON/text | Generation hasn't produced rows yet, or schema validation failed — generate first, then download. |
+| Blank page | Hard-refresh (Ctrl+F5); confirm you opened `http://127.0.0.1:8000` (not a `file://` path). |
 
 ## Security notes
 
@@ -193,4 +158,3 @@ the SME interface automatically.
 - Rotate any API key pasted into a shared channel, screenshot, or commit.
 - No official Accenture logo or proprietary brand assets are bundled; the UI uses
   a brand-safe purple accent (`#A100FF`) and a text "GQ" mark.
-- The Apache config uses `ProxyRequests Off` (reverse proxy only; no forward proxy).

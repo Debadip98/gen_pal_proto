@@ -1,10 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+sqlalchemy
 openai
 openpyxl
 langsmith
-python-dotenv
-fastapi
-uvicorn[standard]
-sqlalchemy
 httpx
 python-multipart
-psycopg2-binary

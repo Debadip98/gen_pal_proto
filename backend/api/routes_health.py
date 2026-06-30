@@ -13,6 +13,7 @@ router = APIRouter(tags=["health"])
 def health_check():
     return {
         "status": "ok",
+        "service": "genpal-question-bank-api",
         "mock_mode": config.use_mock_data(),
         "langsmith_tracing": config.is_langsmith_tracing_enabled(),
         "email_configured": config.is_email_configured(),

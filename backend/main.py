@@ -1,16 +1,22 @@
 """GenPal FastAPI backend entry point.
 
-Start with:
+Local demo — one process serves BOTH the API and the static frontend:
     uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 
-The static frontend is served by Apache HTTPD on http://localhost:8080,
-which reverse-proxies /api/* to this backend. See deploy/apache/.
+Then open http://127.0.0.1:8000  (API under /api/v1).
+
+Because the frontend is served from the same origin and calls relative
+/api/v1 paths, there is no reverse proxy and no cross-origin/connection-refused
+class of errors. Apache (deploy/apache/) remains an OPTIONAL alternative.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from backend.api import (
     routes_docs,
@@ -29,16 +35,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# When served through the Apache reverse proxy the browser calls the same
-# origin (/api/...), so CORS does not apply. These origins only matter for
-# direct-to-backend testing during development.
+# The frontend is served from the same origin as the API, so CORS is moot for
+# the demo. These origins only matter if you call the API from a separate dev
+# server or the optional Apache host.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
-        "http://localhost",
-        "http://127.0.0.1",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -61,6 +67,17 @@ async def startup_event() -> None:
     configure_langsmith()
 
 
-@app.get("/")
-def root():
-    return {"message": "GenPal API is running. See /docs for API documentation."}
+# --- Static frontend (mounted LAST so /api/v1 routes take precedence) --------
+# Serves index.html at "/" and all assets (css/, js/, assets/). The SPA uses
+# hash routing, so the server only needs to serve "/" plus static files.
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "public"
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
+else:  # pragma: no cover - safety net if frontend is missing
+    @app.get("/")
+    def _no_frontend():
+        return {
+            "message": "GenPal API is running, but frontend/public was not found.",
+            "api_docs": "/docs",
+            "health": "/api/v1/health",
+        }
