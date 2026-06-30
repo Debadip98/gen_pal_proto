@@ -7,6 +7,26 @@ import {
 
 const ALL_LEVELS = ["ASE", "SE", "SSE", "TL", "AM", "M", "SM"];
 
+// Mirrors backend calculate_complexity_distribution (core/constants.py): the
+// fixed 5/6/7/11/11 split for exactly 40, otherwise weighted with the
+// remainder assigned Proficient -> Expert -> Advanced -> Intermediate -> Basic.
+const COMPLEXITY_WEIGHTS = { Basic: 0.125, Intermediate: 0.15, Advanced: 0.175, Proficient: 0.275, Expert: 0.275 };
+const FIXED_40 = { Basic: 5, Intermediate: 6, Advanced: 7, Proficient: 11, Expert: 11 };
+const REMAINDER_PRIORITY = ["Proficient", "Expert", "Advanced", "Intermediate", "Basic"];
+
+function complexityDistribution(count) {
+  if (count === 40) return { ...FIXED_40 };
+  if (count <= 0) return { Basic: 0, Intermediate: 0, Advanced: 0, Proficient: 0, Expert: 0 };
+  const dist = {};
+  for (const [c, w] of Object.entries(COMPLEXITY_WEIGHTS)) dist[c] = Math.floor(count * w);
+  let remainder = count - Object.values(dist).reduce((a, b) => a + b, 0);
+  for (const c of REMAINDER_PRIORITY) {
+    if (remainder <= 0) break;
+    dist[c] += 1; remainder -= 1;
+  }
+  return dist;
+}
+
 export async function render({ navigate }) {
   const form = {
     skill_name: "Microsoft SharePoint Server Development",
@@ -90,9 +110,7 @@ export async function render({ navigate }) {
     const body = el("tbody", {});
     ALL_LEVELS.forEach((lv) => {
       const cfg = form.levels[lv];
-      const basic = Math.round(cfg.count * 0.33);
-      const prof = Math.round(cfg.count * 0.34);
-      const adv = cfg.count - basic - prof;
+      const d = complexityDistribution(cfg.count);
       const cb = el("input", { class: "checkbox", type: "checkbox", checked: cfg.enabled,
         onchange: () => { cfg.enabled = !cfg.enabled; build(); } });
       let countCell;
@@ -106,7 +124,7 @@ export async function render({ navigate }) {
         el("td", {}, cb),
         el("td", {}, badge(lv, cfg.enabled ? "purple" : "outline")),
         el("td", {}, countCell),
-        el("td", {}, el("span", { class: "t-xs t-muted" }, `Basic ${basic} · Proficient ${prof} · Advanced ${adv}`))));
+        el("td", {}, el("span", { class: "t-xs t-muted" }, `Basic ${d.Basic} · Inter ${d.Intermediate} · Adv ${d.Advanced} · Prof ${d.Proficient} · Expert ${d.Expert}`))));
     });
     return el("div", { class: "tbl-wrap" }, el("table", { class: "tbl" }, el("thead", {}, head), body));
   }
