@@ -16,9 +16,13 @@ calling OpenAI.
 from __future__ import annotations
 
 import json
+import logging
+import re
 from typing import Callable, Optional
 
 from backend.core import config, constants
+
+logger = logging.getLogger("genpal.generator")
 
 try:
     from langsmith import traceable
@@ -27,6 +31,30 @@ except Exception:
         def _decorator(func):
             return func
         return _decorator
+
+
+def _loads_json(raw: str) -> dict:
+    """Parse model JSON robustly: tolerate ```json fences and surrounding prose."""
+    text = (raw or "").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    if text.startswith("```"):
+        # drop the opening fence (``` or ```json) and any trailing fence
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 _SYSTEM_PROMPT = (
     "You are an expert enterprise exam author building a professional skills "
@@ -41,12 +69,22 @@ ProgressCallback = Optional[Callable[[str], None]]
 
 
 def make_client():
-    """Return an OpenAI client, or None in mock mode."""
+    """Return an OpenAI client, or None in mock mode.
+
+    In real mode a missing API key fails loudly with a clear message — the app
+    must never silently fall back to mock data when real generation is expected.
+    """
     if config.use_mock_data():
         return None
+    api_key = config.get_openai_api_key()
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is missing. Set USE_MOCK_DATA=true for mock mode "
+            "or configure OPENAI_API_KEY."
+        )
     from openai import OpenAI
 
-    client = OpenAI(api_key=config.get_openai_api_key())
+    client = OpenAI(api_key=api_key)
     if config.is_langsmith_tracing_enabled():
         try:
             from langsmith.wrappers import wrap_openai
@@ -88,6 +126,12 @@ def generate_level(
     use_mock = config.use_mock_data()
     if not use_mock and client is None:
         client = make_client()
+    logger.info(
+        "Generation mode: %s%s | level=%s count=%s",
+        "mock" if use_mock else "real_openai",
+        "" if use_mock else f" | model={config.get_openai_generation_model()}",
+        level, question_count,
+    )
 
     rows: list[dict] = []
     for complexity, count in distribution.items():
@@ -246,10 +290,7 @@ def regenerate_single_question(
     if cost_sink and usage:
         cost_sink(config.get_openai_generation_model(), "sme_regenerate", usage)
     content = response.choices[0].message.content or "{}"
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
-        return {}
+    payload = _loads_json(content)
     return payload if isinstance(payload, dict) else {}
 
 
@@ -371,10 +412,7 @@ def _openai_rework_item(
     )
     usage = getattr(response, "usage", None)
     content = response.choices[0].message.content or "{}"
-    try:
-        payload = json.loads(content)
-    except json.JSONDecodeError:
-        return {}, usage
+    payload = _loads_json(content)
     return (payload if isinstance(payload, dict) else {}), usage
 
 
@@ -506,7 +544,7 @@ def _openai_items(
     )
     usage = getattr(response, "usage", None)
     content = response.choices[0].message.content or "{}"
-    payload = json.loads(content)
+    payload = _loads_json(content)
     items = payload.get("records", [])
     return (items if isinstance(items, list) else []), usage
 
