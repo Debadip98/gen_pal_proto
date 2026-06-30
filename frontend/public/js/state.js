@@ -15,6 +15,7 @@ const defaults = {
   selectedQuestionId: null,
   lastVersion: null,
   mockMode: true,
+  backendOnline: null, // null = unknown, true = reachable, false = unreachable
 };
 
 function loadPersisted() {

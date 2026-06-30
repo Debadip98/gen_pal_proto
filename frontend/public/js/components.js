@@ -199,13 +199,19 @@ export function pageHead(title, sub) {
 /* --- App header ---------------------------------------------------------- */
 function appHeader(navigate) {
   const userType = state.get("userType");
+  const online = state.get("backendOnline");
   const mock = state.get("mockMode");
+  // Offline is its own state — never let an unreachable backend masquerade as
+  // "Mock Mode" (that misled us into thinking generation wasn't calling OpenAI).
+  const statusBadge = online === false
+    ? badge("Backend offline", "error", "alertCircle")
+    : badge(mock ? "Mock Mode" : "Live API", mock ? "outline-purple" : "success");
   return el("header", { class: "gp-header" },
     el("div", { class: "gp-header-left" },
       el("div", { class: "gp-logo" }, "GQ"),
       el("h1", { class: "gp-header-title" }, "GenPal Question Bank Factory")),
     el("div", { class: "gp-header-right" },
-      badge(mock ? "Mock Mode" : "Live API", mock ? "outline-purple" : "success"),
+      statusBadge,
       el("div", { class: "role-toggle" },
         el("button", {
           class: userType === "requestor" ? "active-req" : "",

@@ -104,6 +104,21 @@ function errorNode(message) {
 
 let _renderSeq = 0;
 
+// Probe the backend; update mock/online state. Returns true if the badge-
+// relevant status changed (so the caller can re-render the header).
+async function refreshHealth() {
+  try {
+    const h = await api.healthCheck();
+    const changed = state.get("backendOnline") !== true || state.get("mockMode") !== !!h.mock_mode;
+    state.set({ backendOnline: true, mockMode: !!h.mock_mode });
+    return changed;
+  } catch {
+    const changed = state.get("backendOnline") !== false;
+    state.set({ backendOnline: false });
+    return changed;
+  }
+}
+
 async function render() {
   const seq = ++_renderSeq;
   const { path, query } = parseHash();
@@ -137,13 +152,17 @@ async function render() {
   if (seq !== _renderSeq) return; // a newer navigation superseded this one
   app.replaceChildren(layout(pageNode, navigate, path));
   window.scrollTo(0, 0);
+
+  // Background liveness probe so the header badge self-heals as the backend
+  // goes up/down. Re-renders once (only) if the status actually changed.
+  refreshHealth().then((changed) => {
+    if (changed && seq === _renderSeq) render();
+  });
 }
 
 export function startRouter() {
   window.addEventListener("hashchange", render);
-  // Best-effort: learn mock/live mode from the backend health endpoint.
-  api.healthCheck()
-    .then((h) => state.set({ mockMode: !!h.mock_mode }))
-    .catch(() => {})
-    .finally(() => render());
+  // Probe health first so the very first paint shows the correct status badge
+  // (Live API / Mock Mode / Backend offline) instead of a default guess.
+  refreshHealth().finally(() => render());
 }
