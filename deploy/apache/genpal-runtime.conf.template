@@ -1,0 +1,60 @@
+# Standalone Apache runtime config TEMPLATE for the local GenPal deployment.
+#
+# run_apache.bat substitutes the two placeholders below and writes the result
+# to <ApacheHome>\conf\genpal-runtime.conf, then launches httpd against it.
+#   __SRVROOT__      -> Apache install dir (e.g. C:/Users/you/Apache24)
+#   __GENPAL_ROOT__  -> this project's root (folder containing frontend/)
+#
+# Unlike genpal-httpd.conf (which is meant to be Included from a full
+# httpd.conf), this file is fully self-contained so it can be run directly:
+#   httpd.exe -f conf/genpal-runtime.conf
+
+Define SRVROOT "__SRVROOT__"
+ServerRoot "${SRVROOT}"
+ServerName localhost:8080
+
+Listen 8080
+
+# --- Core modules (mpm_winnt is statically built into httpd.exe) ---
+LoadModule authz_core_module       modules/mod_authz_core.so
+LoadModule mime_module             modules/mod_mime.so
+LoadModule dir_module              modules/mod_dir.so
+LoadModule log_config_module       modules/mod_log_config.so
+# --- Reverse proxy + helpers ---
+LoadModule proxy_module            modules/mod_proxy.so
+LoadModule proxy_http_module       modules/mod_proxy_http.so
+LoadModule headers_module          modules/mod_headers.so
+LoadModule rewrite_module          modules/mod_rewrite.so
+
+TypesConfig conf/mime.types
+AddType text/javascript .js .mjs
+AddType text/css .css
+
+DirectoryIndex index.html
+
+LogFormat "%h %l %u %t \"%r\" %>s %b" common
+ErrorLog  "logs/genpal_error.log"
+CustomLog "logs/genpal_access.log" common
+PidFile   "logs/genpal.pid"
+
+DocumentRoot "__GENPAL_ROOT__/frontend/public"
+
+<Directory "__GENPAL_ROOT__/frontend/public">
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+
+    # SPA fallback: serve index.html for any non-file, non-/api request.
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} !^/api/
+    RewriteRule ^ index.html [L]
+</Directory>
+
+# --- Reverse proxy: forward API calls to FastAPI / Uvicorn ---
+ProxyRequests Off
+ProxyPreserveHost On
+ProxyPass        /api/  http://127.0.0.1:8000/api/
+ProxyPassReverse /api/  http://127.0.0.1:8000/api/
+RequestHeader set X-Forwarded-Proto "http"

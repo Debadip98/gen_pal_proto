@@ -113,6 +113,13 @@ Full details + troubleshooting: `deploy/apache/README_APACHE_LOCAL.md`.
 
 ### 5. Start / restart Apache
 
+**One-click (recommended):** `deploy\scripts\run_apache.bat` — it fills the
+machine-specific paths into `deploy/apache/genpal-runtime.conf.template`, writes
+a self-contained config into your Apache `conf\` dir, validates it, and starts
+httpd on port 8080. It defaults to an Apache install at `%USERPROFILE%\Apache24`;
+override with `set APACHE_HOME=C:\Apache24` first if yours lives elsewhere.
+
+Manual alternative:
 - Apache Lounge: `httpd -k restart` (validate first with `httpd -t`)
 - XAMPP: Stop, then Start, Apache in the control panel.
 
