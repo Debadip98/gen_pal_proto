@@ -202,7 +202,7 @@ def get_database_url() -> str:
 
 
 def get_app_base_url() -> str:
-    return _get("APP_BASE_URL", "http://localhost:8501") or "http://localhost:8501"
+    return _get("APP_BASE_URL", "http://localhost:8080") or "http://localhost:8080"
 
 
 def get_backend_url() -> str:

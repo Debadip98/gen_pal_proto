@@ -1,16 +1,52 @@
-# GenPal Question Bank Factory — Streamlit Prototype
+# GenPal Question Bank Factory
 
-A lightweight proof-of-concept Streamlit app for generating, deduplicating, and exporting question banks using the OpenAI API. LangSmith tracing is optional.
+AI-assisted generation, de-duplication, SME review, and GenPal-ready Excel export
+of role-based question banks. Built with a **FastAPI** backend and a **static
+HTML/CSS/JavaScript** frontend served by **Apache HTTPD**.
+
+> **Note on Streamlit:** Streamlit was used for the early prototype only. The
+> current local demo does **not** use Streamlit. The old UI is retained for
+> reference as `app_streamlit_legacy.py` / `api_client_streamlit_legacy.py` and
+> is excluded from the run instructions below.
+
+## Architecture
+
+```
+Browser ──▶ http://localhost:8080/              (static HTML/CSS/JS via Apache)
+        └─▶ http://localhost:8080/api/v1/...     ──proxy──▶ http://127.0.0.1:8000/api/v1/...
+                                                                (FastAPI / Uvicorn)
+```
+
+- **Apache HTTPD** serves the static frontend from `frontend/public/` and
+  reverse-proxies `/api/*` to FastAPI. The browser only ever calls Apache, so
+  the frontend uses relative API paths and there are no CORS issues.
+- **FastAPI** exposes all endpoints under `/api/v1` and handles question
+  generation, duplicate detection, the SME review workflow, Excel export, cost
+  tracking, and SQLite persistence.
+
+```
+genpal_prototype/
+  backend/            FastAPI app (api/, core/, db/, schemas/, services/, pipeline/)
+  frontend/
+    public/           Served by Apache (index.html, css/, js/, js/pages/)
+    src/              Original React/TS source (reference only; not in run path)
+  deploy/
+    apache/           genpal-httpd.conf + README_APACHE_LOCAL.md
+    scripts/          run_backend.bat, build_frontend.bat, copy_frontend_to_apache.bat
+  app_streamlit_legacy.py        LEGACY (not used)
+  api_client_streamlit_legacy.py LEGACY (not used)
+```
 
 ## Output contract
 
-The exported workbook always has **one sheet named `Sheet1`** with **exactly these 11 lowercase columns, in this order**:
+The exported workbook always has **one sheet named `Sheet1`** with **exactly
+these 11 lowercase columns, in this order**:
 
 ```
 title, ssid, skill, topic, question_type, career_level, complexity, question, answer, options, reference_url
 ```
 
-No extra, metadata, summary, validation, or hidden sheets/columns. Column rules:
+No extra, metadata, summary, validation, or hidden sheets/columns.
 
 - **title** — assigned by the app (not the LLM): sequential `1..N` after final merge.
 - **ssid** — from the `Skill ID / SSID` input; same value on every row.
@@ -20,94 +56,134 @@ No extra, metadata, summary, validation, or hidden sheets/columns. Column rules:
 - **career_level** — one of `ASE, SE, SSE, TL, AM, M, SM`.
 - **complexity** — one of `Basic, Intermediate, Advanced, Proficient, Expert`.
 - **question / answer** — scenario-based QnA; no MCQ, no options.
-- **options** — always blank (empty cell).
+- **options** — always blank.
 - **reference_url** — only from the user Reference URL List, unmodified.
 
-Output filename: `<Skill Name>-<SSID>.xlsx` (e.g. `Microsoft SharePoint Server Development-80002591.xlsx`).
+Output filename: `<Skill Name>-<SSID>.xlsx`. Review metadata (review status, SME
+feedback, LLM suggestions) is shown in the UI only and is **never** exported.
 
-## Inputs and modes
+## Prerequisites
 
-Landing page inputs: **Skill Name**, **Skill ID / SSID**, **Topic List** (one per line), **Reference URL List** (one per line), **Career Level Control**, and **Generation Mode**.
+- **Python 3.10+**
+- **Apache HTTPD 2.4+** (Windows: [Apache Lounge](https://www.apachelounge.com/) or [XAMPP](https://www.apachefriends.org/))
+- An **OpenAI API key** — only required when not using mock mode.
 
-- **Full GenPal Mode** — all 7 career levels, 40 questions each = **280 rows**.
-- **Prototype Mode** — selected levels only (default `ASE, SE`), 40 each = `selected × 40` rows.
+## Setup
 
-Generation runs **one career level at a time**, and within a level as five separate LLM calls following the fixed complexity distribution `Basic 5 / Intermediate 6 / Advanced 7 / Proficient 11 / Expert 11` (= 40). One LLM call never spans multiple levels. Each later level receives the questions from already-locked earlier levels as an *Existing Questions to Avoid* list, which reduces cross-level duplicates surfacing in the final check.
+### 1. Install backend dependencies
 
-## Duplicate checks
-
-Cosine similarity on question embeddings runs twice (threshold `0.85`, configurable via `DUPLICATE_SIMILARITY_THRESHOLD`):
-
-1. **After each career level** — colliding rows are surgically regenerated; if duplicates remain after the retry budget, the level is blocked until regenerated.
-2. **Final global repair** across all merged rows — instead of simply blocking, the app automatically repairs duplicates:
-   - Duplicate pairs are grouped into **clusters** (connected components). Exact pairs (similarity `1.0`) are reworked without any extra verification.
-   - One **canonical** row (the earliest row number) is kept per cluster; the rest are reworked, rewriting **only `question`/`answer`** — every fixed field is preserved.
-   - Repair runs in **bounded passes** only (never an unbounded loop) and always ends in one of `FINAL_DUPLICATE_CHECK_PASSED`, `FINAL_MANUAL_REVIEW_REQUIRED`, or `FINAL_REPAIR_FAILED`. Titles are reassigned `1..N` after repair.
-
-Tunables (env-configurable): `MAX_GLOBAL_DUPLICATE_REPAIR_PASSES` (2), `MAX_GLOBAL_REWORK_ATTEMPTS_PER_ROW` (2), `MAX_GLOBAL_REWORK_ROWS_PER_PASS` (15), `MIN_IMPROVEMENT_DELTA` (0.01).
-
-Findings and rework details appear in the `Duplicate / Similar Scenario Findings` expander. The download button appears when the final check passes (or after the user confirms a **manual override** for remaining pairs), row validation passes, and the saved workbook is reopened and re-validated against the contract. A manual-override export carries a UI warning and adds **no** extra columns or sheets.
-
-## Local setup
-
-1. Create and activate a virtual environment:
-   ```bash
-   python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS / Linux
-   source .venv/bin/activate
-   ```
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Copy the example env file and fill in real values:
-   ```bash
-   cp .env.example .env
-   ```
-4. Run the app:
-   ```bash
-   streamlit run app.py
-   ```
-
-## Mock mode
-
-Leave `OPENAI_API_KEY` blank and set `USE_MOCK_DATA=true` in `.env` to run the UI without calling OpenAI. This is the default when no API key is configured, so you can demo the interface end-to-end without billing.
-
-When `USE_MOCK_DATA=false` and `OPENAI_API_KEY` is missing, the app shows a clear error banner and stops — it will not crash.
-
-## Optional access password
-
-Set `APP_PASSWORD` in `.env` (or Streamlit secrets) to gate the prototype behind a shared password. Leave it blank to disable the gate. This is a lightweight prototype gate, not enterprise authentication.
-
-## LangSmith tracing (optional)
-
-- Set both `LANGSMITH_API_KEY` and `LANGSMITH_TRACING=true` to enable tracing — the sidebar will show "LangSmith tracing enabled".
-- If `LANGSMITH_API_KEY` is missing, the app still runs and the sidebar shows "LangSmith tracing not configured".
-
-## Streamlit Cloud deployment
-
-Add the following to your app's **Secrets** panel in Streamlit Cloud (`Settings → Secrets`). `st.secrets` is read before `.env`, so cloud values win when both are present.
-
-```toml
-OPENAI_API_KEY = "your_openai_key"
-OPENAI_GENERATION_MODEL = "gpt-4o"
-OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
-
-LANGSMITH_TRACING = "true"
-LANGSMITH_API_KEY = "your_langsmith_key"
-LANGSMITH_PROJECT = "genpal-prototype"
-
-USE_MOCK_DATA = "false"
-DUPLICATE_SIMILARITY_THRESHOLD = "0.85"
-
-APP_PASSWORD = "your_demo_password"
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
+
+### 2. Configure environment
+
+```bat
+copy .env.example .env
+```
+
+Edit `.env`. For a no-cost demo, leave `OPENAI_API_KEY` blank and keep
+`USE_MOCK_DATA=true`. Keep `APP_BASE_URL=http://localhost:8080` so SME review
+links point at the Apache-hosted frontend.
+
+### 3. Run the FastAPI backend (Terminal 1)
+
+```bat
+deploy\scripts\run_backend.bat
+```
+
+or manually:
+
+```bat
+python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 4. Configure Apache HTTPD
+
+1. Enable modules in `httpd.conf`: `mod_proxy`, `mod_proxy_http`, `mod_headers`,
+   `mod_rewrite`.
+2. In `deploy/apache/genpal-httpd.conf`, set `Define GENPAL_ROOT` to your
+   checkout path (forward slashes).
+3. Include it from `httpd.conf`:
+   `Include "C:/.../Genpal_prototype/deploy/apache/genpal-httpd.conf"`
+
+Full details + troubleshooting: `deploy/apache/README_APACHE_LOCAL.md`.
+
+### 5. Start / restart Apache
+
+- Apache Lounge: `httpd -k restart` (validate first with `httpd -t`)
+- XAMPP: Stop, then Start, Apache in the control panel.
+
+### 6. Open the app
+
+- Frontend: <http://localhost:8080>
+- Health through Apache: <http://localhost:8080/api/v1/health> → `{"status":"ok",...}`
+
+## Mock mode vs. real API mode
+
+- **Mock mode** (default): `USE_MOCK_DATA=true`, `OPENAI_API_KEY` blank. Runs the
+  full UI and workflow with deterministic mock data — no OpenAI billing. The
+  header shows a **Mock Mode** badge.
+- **Real API mode**: set `OPENAI_API_KEY` and `USE_MOCK_DATA=false`. Generation,
+  embeddings, and review suggestions call OpenAI. The header shows **Live API**.
+
+## Using the app
+
+1. **Request Intake** (`#/`) — enter skill, SSID, emails, topics, URLs, career
+   levels, and threshold, then **Generate Question Bank**.
+2. **Docs Discovery / Generation** — optionally select docs, then watch
+   generation progress; you're routed to the dashboard when done.
+3. **Requestor Dashboard** (`#/dashboard?job_token=...`) — monitor review
+   progress and notifications; download Draft Excel.
+4. **Send to SME** — creates a secure review link
+   `http://localhost:8080/#/review?review_token=...` and (optionally) emails it.
+5. **SME Review** (`#/review?review_token=...`) — accept / reject / regenerate
+   each question, compare versions, check doc alignment, then complete the review.
+6. **Export / Cost / Business Flow** — download Approved Excel, view cost &
+   traceability, and the end-to-end flow.
+
+### Testing the SME review link
+
+After **Send to SME**, copy the displayed link (or read it from the backend
+response/email) and open it in a new tab. A `review_token` switches the app into
+the SME interface automatically.
+
+### Downloading Excel
+
+- **Draft** — available once rows exist; may include pending questions (UI shows
+  a warning; the file itself carries no review metadata).
+- **Approved** — enabled once all questions are accepted (no pending, no
+  rejected). Both buttons hit `GET /api/v1/jobs/{id}/export?type=draft|approved`
+  through Apache and trigger a browser download.
+
+## API reference (under `/api/v1`)
+
+`GET /health` · `POST /jobs` · `GET /jobs/{id}` · `POST /jobs/{id}/generate` ·
+`GET /jobs/{id}/questions` · `GET /jobs/{id}/cost-summary` ·
+`POST /jobs/{id}/discover-docs` · `POST /jobs/{id}/select-docs` ·
+`POST /jobs/{id}/send-sme-review` · `GET /review/{token}` ·
+`POST /review/{token}/questions/{qid}/accept|reject|suggestion|regenerate` ·
+`POST /review/{token}/versions/{vid}/accept|reject` ·
+`GET /dashboard/{job_token}` · `GET /jobs/{id}/export`.
+
+## Troubleshooting
+
+| Symptom | Cause / Fix |
+|---|---|
+| Frontend can't reach API / network error | FastAPI not running. Start `deploy\scripts\run_backend.bat`. |
+| `502 Proxy Error` | Backend down or wrong port. Confirm Uvicorn on `127.0.0.1:8000`. |
+| `/api/v1/health` returns Apache 404 | `mod_proxy`/`mod_proxy_http` not enabled, or `ProxyPass` missing. |
+| CORS error in console | You bypassed Apache. Always browse via `http://localhost:8080`. |
+| `AH00526` duplicate `Listen` | Remove the extra `Listen 8080` from `httpd.conf`. |
+| Excel "download" shows JSON/text | The export request didn't reach the proxied backend endpoint. |
+| JS changes not reflected | Hard-refresh (Ctrl+F5) to bust the module cache. |
 
 ## Security notes
 
-- Never commit `.env` or `.streamlit/secrets.toml` — both are git-ignored.
-- `.env.example` is safe to commit; it must only contain blank or non-sensitive default values.
-- Rotate any API key that has been pasted into a shared channel, screenshot, or commit.
-- The app never prints or renders API keys; the sidebar only reports a configured / not-configured status.
+- Never commit `.env`; `.env.example` holds only blank/non-sensitive defaults.
+- Rotate any API key pasted into a shared channel, screenshot, or commit.
+- No official Accenture logo or proprietary brand assets are bundled; the UI uses
+  a brand-safe purple accent (`#A100FF`) and a text "GQ" mark.
+- The Apache config uses `ProxyRequests Off` (reverse proxy only; no forward proxy).

@@ -1,6 +1,9 @@
-"""Thin httpx API client for GenPal Streamlit frontend.
+"""LEGACY — httpx API client for the old Streamlit frontend (NOT used at runtime).
 
-All calls go to the FastAPI backend. BACKEND_URL defaults to localhost:8000
+The static frontend in frontend/public/ calls the backend directly via relative
+/api paths through Apache. This module is kept for reference only.
+
+All calls go to the FastAPI backend. BACKEND_URL defaults to 127.0.0.1:8000
 but can be overridden via the BACKEND_URL environment variable.
 """
 
@@ -20,7 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080").rstrip("/")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 API = f"{BACKEND_URL}/api/v1"
 TIMEOUT = 600  # seconds — generation can take a while
 

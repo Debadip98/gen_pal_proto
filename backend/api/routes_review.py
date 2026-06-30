@@ -137,8 +137,8 @@ def send_sme_review(job_id: str, db: Session = Depends(get_db)):
     job.updated_at = datetime.utcnow()
     db.commit()
 
-    app_base = config.get_app_base_url()
-    review_link = f"{app_base}?review_token={token}"
+    app_base = config.get_app_base_url().rstrip("/")
+    review_link = f"{app_base}/#/review?review_token={token}"
 
     email_sent = email_service.send_review_link(
         job.sme_email, review_link, job.skill_name, job.requestor_email

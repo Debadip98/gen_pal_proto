@@ -1,10 +1,10 @@
 """GenPal FastAPI backend entry point.
 
 Start with:
-    uvicorn backend.main:app --reload --port 8000
+    uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 
-The Streamlit UI runs separately:
-    streamlit run app.py
+The static frontend is served by Apache HTTPD on http://localhost:8080,
+which reverse-proxies /api/* to this backend. See deploy/apache/.
 """
 
 from __future__ import annotations
@@ -29,9 +29,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# When served through the Apache reverse proxy the browser calls the same
+# origin (/api/...), so CORS does not apply. These origins only matter for
+# direct-to-backend testing during development.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost",
+        "http://127.0.0.1",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

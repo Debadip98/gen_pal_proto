@@ -1,4 +1,12 @@
-"""GenPal Question Bank Factory — Enterprise UI (FastAPI-backed)."""
+"""LEGACY — Streamlit UI (NOT part of the runtime path).
+
+The current local demo serves a static HTML/CSS/JS frontend via Apache HTTPD
+(see frontend/public/ and deploy/apache/). This file is retained for reference
+only and is not used to run the app; it also requires `streamlit`, which has
+been removed from requirements.txt.
+
+GenPal Question Bank Factory — Enterprise UI (FastAPI-backed).
+"""
 from __future__ import annotations
 
 import time
@@ -10,9 +18,10 @@ import api_client as _api
 # Keep backward-compatible imports for page functions that still reference
 # plan/config constants directly (display only — no LLM calls via services).
 try:
-    from services import plan, config
+    from services import plan, config, genpal
 except ImportError:
     from backend.core import constants as plan, config
+    genpal = plan  # fallback: constants live in plan under backend layout
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -101,20 +110,28 @@ html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMainBloc
 .stDeployButton { display: none; }
 .block-container { padding-top: 0 !important; padding-bottom: 2rem !important; max-width: 1400px !important; }
 
-/* Sidebar — always dark */
+/* Sidebar — white, clean */
 [data-testid="stSidebar"] {
-    background: #1F1F29 !important;
-    border-right: 1px solid #2D2D3A !important;
-    min-width: 220px !important;
+    background: #FFFFFF !important;
+    border-right: 1px solid #E5E7EB !important;
+    min-width: 240px !important;
 }
-[data-testid="stSidebar"] > div { background: #1F1F29 !important; }
-[data-testid="stSidebar"] * { color: #CBD5E1 !important; }
-[data-testid="stSidebar"] h1,[data-testid="stSidebar"] h2,[data-testid="stSidebar"] h3 { color: #FFFFFF !important; }
-[data-testid="stSidebar"] .stRadio label { font-size: 0.8rem !important; padding: 0.3rem 0 !important; }
-[data-testid="stSidebar"] .stRadio > div { gap: 2px !important; }
+[data-testid="stSidebar"] > div { background: #FFFFFF !important; }
+[data-testid="stSidebar"] * { color: #374151 !important; }
+[data-testid="stSidebar"] h1,[data-testid="stSidebar"] h2,[data-testid="stSidebar"] h3 { color: #1F1F29 !important; }
+[data-testid="stSidebar"] .stRadio label {
+    font-size: 0.8rem !important; padding: 0.35rem 0.65rem !important;
+    border-radius: 6px !important; color: #374151 !important;
+    display: block !important; transition: background 0.12s !important;
+}
+[data-testid="stSidebar"] .stRadio label:hover { background: #F3E6FF !important; color: #A100FF !important; }
+[data-testid="stSidebar"] .stRadio > div { gap: 1px !important; }
 [data-testid="stSidebar"] [data-baseweb="radio"] { background: transparent !important; }
+[data-testid="stSidebar"] [data-baseweb="radio"] [data-testid="stRadioLabel"] { padding-left: 0 !important; }
+/* Hide the radio dot — use full-width label styling instead */
+[data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child { display: none !important; }
 /* Sidebar collapse button */
-[data-testid="collapsedControl"] { color: #CBD5E1 !important; }
+[data-testid="collapsedControl"] { color: #6B7280 !important; }
 
 /* Buttons */
 .stButton > button { border-radius: 6px !important; font-weight: 600 !important; font-size: 0.825rem !important; transition: all 0.15s !important; }
@@ -171,19 +188,52 @@ html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMainBloc
 .stDownloadButton > button { border-radius: 6px !important; font-weight: 600 !important; }
 .stDownloadButton > button[kind="primary"] { background: var(--purple) !important; color: white !important; border: none !important; }
 
+/* Sidebar nav group labels */
+.sb-group-label {
+    font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.1em; color: #9CA3AF;
+    padding: 0.75rem 0.5rem 0.25rem; display: block;
+}
+.sb-nav-item {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.38rem 0.65rem; border-radius: 6px;
+    font-size: 0.8rem; font-weight: 500; color: #374151;
+    cursor: pointer; transition: all 0.12s; margin-bottom: 1px;
+    text-decoration: none;
+}
+.sb-nav-item:hover { background: #F3E6FF; color: #A100FF; }
+.sb-nav-item.active { background: #A100FF; color: #FFFFFF !important; font-weight: 600; }
+.sb-nav-item.active * { color: #FFFFFF !important; }
+.sb-nav-num { font-size: 0.68rem; color: #9CA3AF; min-width: 18px; }
+.sb-nav-item.active .sb-nav-num { color: rgba(255,255,255,0.75); }
+
 /* Custom components */
 .gp-header {
-    background: #1F1F29 !important; color: white !important;
-    padding: 0.875rem 1.5rem !important;
+    background: #FFFFFF !important; color: #1F1F29 !important;
+    padding: 0.75rem 1.5rem !important;
     margin: -1rem -1rem 1rem -1rem !important;
     display: flex !important; align-items: center !important;
     justify-content: space-between !important;
-    border-bottom: 3px solid #A100FF !important;
+    border-bottom: 1px solid #E5E7EB !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
 }
-.gp-header-left { display: flex; flex-direction: column; }
-.gp-header-title { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.01em; color: #FFFFFF !important; }
-.gp-header-sub { font-size: 0.72rem; color: #94A3B8 !important; margin-top: 3px; }
+.gp-logo-sq {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: #A100FF; display: flex; align-items: center;
+    justify-content: center; font-size: 0.8rem; font-weight: 800;
+    color: #FFFFFF; letter-spacing: -0.02em; flex-shrink: 0;
+}
+.gp-header-left { display: flex; align-items: center; gap: 0.75rem; }
+.gp-header-title { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; color: #1F1F29 !important; }
+.gp-header-sub { font-size: 0.72rem; color: #6B7280 !important; margin-top: 2px; }
 .gp-header-right { display: flex; gap: 0.5rem; align-items: center; }
+.gp-toggle-btn {
+    padding: 4px 14px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+    border: 1.5px solid #E5E7EB; background: transparent; color: #6B7280;
+    cursor: default;
+}
+.gp-toggle-btn.active-req { background: #1F1F29; color: #FFFFFF; border-color: #1F1F29; }
+.gp-toggle-btn.active-sme { background: #A100FF; color: #FFFFFF; border-color: #A100FF; }
 
 .badge {
     display: inline-flex; align-items: center; padding: 2px 9px;
@@ -305,6 +355,14 @@ html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMainBloc
 
 .gp-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.7rem; color: var(--muted); text-align: center; }
 .sep { width: 100%; height: 1px; background: var(--border); margin: 1.25rem 0; }
+
+/* Sidebar radio — custom pill look */
+[data-testid="stSidebar"] .stRadio [data-baseweb="radio"] {
+    width: 100% !important;
+}
+[data-testid="stSidebar"] .stRadio [data-testid="stMarkdownContainer"] {
+    width: 100% !important;
+}
 </style>
 """
 
@@ -340,63 +398,85 @@ def section(title: str, subtitle: str = "") -> None:
 
 def render_header() -> None:
     page = st.session_state.get("page", "input")
-    user_type = "SME" if page.startswith("sme") else "Requestor"
+    is_sme = page.startswith("sme")
     is_mock = st.session_state.get("_genpal_mock_mode", config.use_mock_data())
-    mode_label = "Mock Mode" if is_mock else "Real API Mode"
+    mode_label = "Mock" if is_mock else "Live"
     mode_style = "warning" if is_mock else "success"
+    req_cls = "gp-toggle-btn active-req" if not is_sme else "gp-toggle-btn"
+    sme_cls = "gp-toggle-btn active-sme" if is_sme else "gp-toggle-btn"
     h(f"""
     <div class="gp-header">
         <div class="gp-header-left">
-            <div class="gp-header-title">GenPal Question Bank Factory</div>
-            <div class="gp-header-sub">AI-assisted question bank generation · SME review · GenPal-ready Excel export</div>
+            <div class="gp-logo-sq">GQ</div>
+            <div>
+                <div class="gp-header-title">GenPal Question Bank Factory</div>
+                <div class="gp-header-sub">AI-assisted generation · SME review · GenPal-ready Excel</div>
+            </div>
         </div>
         <div class="gp-header-right">
             {badge(mode_label, mode_style)}
-            {badge(user_type, "info")}
+            <span class="{req_cls}">Requestor</span>
+            <span class="{sme_cls}">SME</span>
         </div>
     </div>
     """)
 
 def render_sidebar() -> None:
-    NAV = [
-        ("input",        "01  Input Form"),
-        ("docs",         "02  Documentation"),
-        ("progress",     "03  Generation Progress"),
-        ("dashboard",    "04  Requestor Dashboard"),
-        ("sme_send",     "05  Send to SME"),
-        ("sme_review",   "06  SME Review Queue"),
-        ("sme_question", "07  Question Review"),
-        ("regenerate",   "08  Regenerate"),
-        ("comparison",   "09  Version Compare"),
-        ("docs_check",   "10  Doc Alignment"),
-        ("sme_complete", "11  Review Complete"),
-        ("export",       "12  Export Center"),
-        ("cost",         "13  Cost & Traceability"),
-        ("flow",         "14  Business Flow"),
+    GROUPS = [
+        ("Requestor", [
+            ("input",     "01", "Input Form"),
+            ("docs",      "02", "Docs Discovery"),
+            ("progress",  "03", "Generation"),
+            ("dashboard", "04", "Dashboard"),
+            ("sme_send",  "05", "Send to SME"),
+        ]),
+        ("SME", [
+            ("sme_review",   "06", "Review Queue"),
+            ("sme_question", "07", "Question Review"),
+            ("regenerate",   "08", "Rework"),
+            ("comparison",   "09", "Version Compare"),
+            ("docs_check",   "10", "Doc Alignment"),
+            ("sme_complete", "11", "Review Complete"),
+        ]),
+        ("Output", [
+            ("export", "12", "Export Center"),
+            ("cost",   "13", "Cost Summary"),
+            ("flow",   "14", "Business Flow"),
+        ]),
     ]
+    all_keys   = [k for _, items in GROUPS for k, _, _ in items]
+    all_labels = [f"{num}  {lbl}" for _, items in GROUPS for _, num, lbl in items]
+
+    current = st.session_state.get("page", "input")
+    current_idx = all_keys.index(current) if current in all_keys else 0
+
     with st.sidebar:
-        h("""<div style="padding:1rem 0.5rem 0.75rem;border-bottom:1px solid #2D2D3A;margin-bottom:0.75rem;">
-            <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;color:#64748B;text-transform:uppercase;">Navigation</div>
+        h("""<div style="padding:1.25rem 0.75rem 0.5rem;">
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+                <div style="width:26px;height:26px;border-radius:6px;background:#A100FF;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:0.7rem;font-weight:800;color:#fff;">GQ</div>
+                <div style="font-size:0.8rem;font-weight:700;color:#1F1F29;">GenPal Factory</div>
+            </div>
         </div>""")
-        labels = [label for _, label in NAV]
-        keys   = [key for key, _ in NAV]
-        current = st.session_state.get("page", "input")
-        current_idx = keys.index(current) if current in keys else 0
-        choice = st.radio("", labels, index=current_idx, key="_nav_radio",
+        h('<div style="height:1px;background:#E5E7EB;margin:0 0.75rem 0.5rem;"></div>')
+
+        choice = st.radio("", all_labels, index=current_idx, key="_nav_radio",
                           label_visibility="collapsed")
-        chosen_key = keys[labels.index(choice)]
+        chosen_key = all_keys[all_labels.index(choice)]
         if chosen_key != current:
             st.session_state["page"] = chosen_key
             st.rerun()
 
-        h('<div style="height:1px;background:#2D2D3A;margin:0.75rem 0;"></div>')
+        h('<div style="height:1px;background:#E5E7EB;margin:0.75rem 0.75rem 0.5rem;"></div>')
         ls_ok = st.session_state.get("_genpal_langsmith_configured", False)
-        h(f"""<div style="padding:0 0.5rem;">
-            <div style="font-size:0.68rem;color:#94A3B8;margin-bottom:4px;">
-                {'● LangSmith ON' if ls_ok else '○ LangSmith off'}
+        backend_ok = st.session_state.get("_genpal_backend_ok", False)
+        h(f"""<div style="padding:0 0.75rem 1rem;">
+            <div style="font-size:0.68rem;color:{'#1E8E3E' if backend_ok else '#D93025'};margin-bottom:3px;">
+                {'● Backend online' if backend_ok else '● Backend offline'}
             </div>
-            <div style="font-size:0.68rem;color:#94A3B8;">
-                Threshold: {config.get_duplicate_similarity_threshold()}
+            <div style="font-size:0.68rem;color:#9CA3AF;">
+                {'● LangSmith on' if ls_ok else '○ LangSmith off'} · Threshold: {config.get_duplicate_similarity_threshold()}
             </div>
         </div>""")
 
@@ -405,8 +485,9 @@ def _reset_pipeline() -> None:
     for key in ("_genpal_locked", "_genpal_level_dups", "_genpal_pending_level",
                 "_genpal_pending_count", "_genpal_merged", "_genpal_final_status",
                 "_genpal_final_report", "_genpal_override", "_genpal_errors",
-                "_genpal_xlsx", "_genpal_filename", "_genpal_job_id",
-                "_genpal_job_token", "_genpal_review_link", "_genpal_review_token"):
+                "_genpal_error_type", "_genpal_xlsx", "_genpal_filename",
+                "_genpal_job_id", "_genpal_job_token", "_genpal_review_link",
+                "_genpal_review_token"):
         st.session_state.pop(key, None)
     st.session_state["_genpal_locked"] = {}
 
@@ -442,6 +523,11 @@ def _create_job_via_api() -> bool:
         st.session_state["_genpal_job_token"] = result["job_token"]
         return True
     except Exception as exc:
+        msg = str(exc)
+        if "10061" in msg or "refused" in msg.lower() or "connectionerror" in msg.lower():
+            st.session_state["_genpal_error_type"] = "BACKEND_CONNECTION_ERROR"
+        else:
+            st.session_state["_genpal_error_type"] = "CREATE_JOB_ERROR"
         st.session_state["_genpal_errors"] = [f"Failed to create job: {exc}"]
         return False
 
@@ -462,6 +548,11 @@ def _run_pipeline() -> None:
         if "409" in err_msg or "already in progress" in err_msg.lower():
             pass  # already generating, continue to poll
         else:
+            msg = str(exc)
+            if "10061" in msg or "refused" in msg.lower() or "connectionerror" in msg.lower():
+                st.session_state["_genpal_error_type"] = "BACKEND_CONNECTION_ERROR"
+            else:
+                st.session_state["_genpal_error_type"] = "GENERATION_ERROR"
             st.session_state["_genpal_errors"] = [f"Generation failed to start: {exc}"]
             progress.empty()
             return
@@ -514,6 +605,7 @@ def _run_pipeline() -> None:
                 st.session_state["_genpal_errors"] = [f"Failed to fetch results: {exc}"]
             break
         elif status == "FAILED":
+            st.session_state["_genpal_error_type"] = "GENERATION_ERROR"
             st.session_state["_genpal_errors"] = [
                 job.get("error_message") or "Generation failed. Check backend logs."
             ]
@@ -524,14 +616,26 @@ def _run_pipeline() -> None:
     progress.empty()
 
 # ─── PAGE 1: Input Form ───────────────────────────────────────────────────────
+def _flow_strip(active_idx: int) -> None:
+    steps = ["Input", "Generate", "Validate", "SME Review", "Export"]
+    parts = []
+    for i, label in enumerate(steps):
+        if i < active_idx:
+            circle = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#1E8E3E;color:#fff;font-size:0.65rem;font-weight:700;">✓</span>'
+            text_cls = "color:#1E8E3E;font-weight:600;"
+        elif i == active_idx:
+            circle = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#A100FF;color:#fff;font-size:0.65rem;font-weight:700;">{i+1}</span>'
+            text_cls = "color:#A100FF;font-weight:700;"
+        else:
+            circle = f'<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:2px solid #D9D9E3;color:#9CA3AF;font-size:0.65rem;font-weight:600;">{i+1}</span>'
+            text_cls = "color:#9CA3AF;"
+        parts.append(f'<span style="display:flex;align-items:center;gap:5px;font-size:0.75rem;{text_cls}">{circle}{label}</span>')
+        if i < len(steps) - 1:
+            parts.append('<span style="color:#D9D9E3;font-size:0.9rem;margin:0 2px;">›</span>')
+    h(f'<div class="flow-strip">{"".join(parts)}</div>')
+
 def page_input() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs active">Input</span><span class="fa">›</span>
-        <span class="fs">Generate</span><span class="fa">›</span>
-        <span class="fs">Validate</span><span class="fa">›</span>
-        <span class="fs">SME Review</span><span class="fa">›</span>
-        <span class="fs">Export Excel</span>
-    </div>""")
+    _flow_strip(0)
 
     left, right = st.columns([2, 1])
 
@@ -628,23 +732,33 @@ def page_input() -> None:
                 for e in errors:
                     st.error(e)
             else:
-                resolved = plan.build_plan(mode, levels)
-                resolved_counts = {lvl: level_counts.get(lvl, 40) for lvl in resolved.levels}
-                _reset_pipeline()
-                st.session_state["_genpal_inputs"] = {
-                    "skill": skill.strip(), "ssid": ssid.strip(),
-                    "topics": topics, "urls": urls, "req_email": req_email.strip(),
-                    "sme_email": sme_email.strip(), "mode": resolved.mode,
-                    "levels": resolved.levels,
-                    "level_counts": resolved_counts,
-                    "total": sum(resolved_counts.values()),
-                }
-                st.session_state["_genpal_should_run"] = True
-                if auto_docs:
-                    st.session_state["page"] = "docs"
+                # Re-check backend before navigating away
+                health = _api.health_check()
+                backend_up = health.get("status") == "ok"
+                st.session_state["_genpal_backend_ok"] = backend_up
+                st.session_state["_genpal_backend_checked"] = True
+                if not backend_up:
+                    st.error("Backend API is not reachable. Start the FastAPI backend first:")
+                    st.code("uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000", language="bash")
+                    st.caption(f"Configured URL: {_api.BACKEND_URL}")
                 else:
-                    st.session_state["page"] = "progress"
-                st.rerun()
+                    resolved = plan.build_plan(mode, levels)
+                    resolved_counts = {lvl: level_counts.get(lvl, 40) for lvl in resolved.levels}
+                    _reset_pipeline()
+                    st.session_state["_genpal_inputs"] = {
+                        "skill": skill.strip(), "ssid": ssid.strip(),
+                        "topics": topics, "urls": urls, "req_email": req_email.strip(),
+                        "sme_email": sme_email.strip(), "mode": resolved.mode,
+                        "levels": resolved.levels,
+                        "level_counts": resolved_counts,
+                        "total": sum(resolved_counts.values()),
+                    }
+                    st.session_state["_genpal_should_run"] = True
+                    if auto_docs:
+                        st.session_state["page"] = "docs"
+                    else:
+                        st.session_state["page"] = "progress"
+                    st.rerun()
 
     with right:
         inp = st.session_state.get("_genpal_inputs", {})
@@ -697,17 +811,39 @@ def page_input() -> None:
         mode_label = "Mock Mode" if config.use_mock_data() else "Real API Mode"
         h(f'<div style="text-align:center;margin-top:0.75rem;">{badge(mode_label, mode_style)}</div>')
 
+        with st.container(border=True):
+            h('<div class="card-title">Backend Connection</div>')
+            backend_ok = st.session_state.get("_genpal_backend_ok", False)
+            if backend_ok:
+                h(f'<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">'
+                  f'<span style="color:var(--success);font-size:1rem;">●</span>'
+                  f'<span style="font-size:0.8rem;color:var(--success);font-weight:600;">Backend online</span></div>')
+                h(f'<div style="font-size:0.72rem;color:var(--muted);">{_api.BACKEND_URL}</div>')
+            else:
+                h(f'<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">'
+                  f'<span style="color:var(--error);font-size:1rem;">●</span>'
+                  f'<span style="font-size:0.8rem;color:var(--error);font-weight:600;">Backend offline</span></div>')
+                h(f'<div style="font-size:0.72rem;color:var(--muted);margin-bottom:0.5rem;">{_api.BACKEND_URL}</div>')
+                h('<div style="font-size:0.72rem;color:var(--secondary);background:var(--surface);'
+                  'border-radius:4px;padding:0.4rem 0.6rem;font-family:monospace;margin-bottom:0.5rem;">'
+                  'uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000</div>')
+            if st.button("Check Connection", key="btn_check_backend", use_container_width=True):
+                health = _api.health_check()
+                if health.get("status") == "ok":
+                    st.session_state["_genpal_backend_ok"] = True
+                    st.session_state["_genpal_mock_mode"] = health.get("mock_mode", True)
+                    st.session_state["_genpal_backend_checked"] = True
+                    st.rerun()
+                else:
+                    st.session_state["_genpal_backend_ok"] = False
+                    st.session_state["_genpal_backend_checked"] = True
+                    st.rerun()
+
     h('<div class="gp-footer">Prototype design. Official brand assets should be applied only from approved internal sources.</div>')
 
 # ─── PAGE 2: Documentation Discovery ─────────────────────────────────────────
 def page_docs() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs done">Input</span><span class="fa">›</span>
-        <span class="fs active">Documentation</span><span class="fa">›</span>
-        <span class="fs">Generate</span><span class="fa">›</span>
-        <span class="fs">SME Review</span><span class="fa">›</span>
-        <span class="fs">Export Excel</span>
-    </div>""")
+    _flow_strip(1)
 
     inp = st.session_state.get("_genpal_inputs", {})
     skill = inp.get("skill", "the selected skill")
@@ -763,14 +899,7 @@ def page_docs() -> None:
 
 # ─── PAGE 3: Generation Progress ─────────────────────────────────────────────
 def page_progress() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs done">Input</span><span class="fa">›</span>
-        <span class="fs done">Documentation</span><span class="fa">›</span>
-        <span class="fs active">Generate</span><span class="fa">›</span>
-        <span class="fs">Validate</span><span class="fa">›</span>
-        <span class="fs">SME Review</span><span class="fa">›</span>
-        <span class="fs">Export Excel</span>
-    </div>""")
+    _flow_strip(1)
 
     inp = st.session_state.get("_genpal_inputs")
     if not inp:
@@ -787,22 +916,25 @@ def page_progress() -> None:
 
     section("Generation Progress", f"{skill} · SSID: {ssid}")
 
-    # Stepper
-    stepper_html = '<div class="step-row">'
+    # Horizontal stepper
     locked = st.session_state.get("_genpal_locked", {})
     pending = st.session_state.get("_genpal_pending_level")
+    stepper_html = '<div class="step-row">'
     for i, lv in enumerate(levels):
         if i > 0:
-            done_conn = lv in locked or (i < levels.index(pending) if pending else False)
+            done_conn = lv in locked or (pending and i <= levels.index(pending))
             stepper_html += f'<div class="step-conn {"done" if done_conn else ""}"></div>'
         if lv in locked:
             state = "done"
+            inner = "✓"
         elif lv == pending:
             state = "warn"
+            inner = lv[0]
         else:
             state = ""
+            inner = lv[0]
         stepper_html += (f'<div class="step-wrap">'
-                         f'<div class="step-circle {state}">{"✓" if lv in locked else lv[0]}</div>'
+                         f'<div class="step-circle {state}">{inner}</div>'
                          f'<div class="step-lbl {state}">{lv}</div></div>')
     stepper_html += '</div>'
     h(stepper_html)
@@ -821,15 +953,21 @@ def page_progress() -> None:
 
     # Metrics
     done_count = sum(len(v) for v in locked.values())
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Expected", total)
-    c2.metric("Generated", done_count)
-    c3.metric("Dup Pairs", final_report.get("initial_pair_count", 0))
-    c4.metric("Reworked", final_report.get("reworked_count", 0))
-    c5.metric("Levels Done", len(locked))
+    pct = done_count / total * 100 if total else 0
+    metrics = [
+        ("Expected", str(total), "#1F1F29"),
+        ("Generated", str(done_count), "#A100FF"),
+        ("Dup Pairs", str(final_report.get("initial_pair_count", 0)), "#D93025"),
+        ("Reworked", str(final_report.get("reworked_count", 0)), "#B45309"),
+        ("Levels Done", f"{len(locked)} / {len(levels)}", "#1E8E3E"),
+    ]
+    cols = st.columns(5)
+    for col, (lbl, val, color) in zip(cols, metrics):
+        with col:
+            h(f'<div class="metric-box"><div class="m-value" style="color:{color};">{val}</div><div class="m-label">{lbl}</div></div>')
 
-    h(progress_bar(done_count / total * 100 if total else 0))
-    h(f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem;">Generated {done_count} / {total} rows</div>')
+    h(f'<div style="margin:0.75rem 0 0.25rem;">{progress_bar(pct)}</div>')
+    h(f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:1rem;">Generated {done_count} / {total} rows · {pct:.0f}% complete</div>')
 
     # Level status cards
     with st.container(border=True):
@@ -865,13 +1003,47 @@ def page_progress() -> None:
         return
 
     if errors:
-        st.error("Validation failed. Export is blocked.")
-        for msg in errors[:20]:
-            st.warning(msg)
-        if st.button("Clear and Regenerate", type="secondary"):
-            _reset_pipeline()
-            st.session_state["_genpal_should_run"] = True
-            st.rerun()
+        error_type = st.session_state.get("_genpal_error_type", "GENERATION_ERROR")
+        if error_type == "BACKEND_CONNECTION_ERROR":
+            st.error("Backend API is not reachable.")
+            st.info(
+                f"Start the FastAPI backend in a separate terminal:\n\n"
+                f"```\nuvicorn backend.main:app --reload --host 127.0.0.1 --port 8000\n```\n\n"
+                f"Current API URL: `{_api.BACKEND_URL}`"
+            )
+            if st.button("Check Backend Connection", type="primary"):
+                health = _api.health_check()
+                if health.get("status") == "ok":
+                    st.session_state["_genpal_backend_ok"] = True
+                    st.session_state["_genpal_backend_checked"] = True
+                    _reset_pipeline()
+                    st.success("Backend is online. Please go back to the Input Form and generate again.")
+                else:
+                    st.error("Backend still not reachable. Is uvicorn running?")
+        elif error_type == "CREATE_JOB_ERROR":
+            st.error("Failed to create job on the backend.")
+            for msg in errors[:20]:
+                st.warning(msg)
+            if st.button("Retry", type="secondary"):
+                _reset_pipeline()
+                st.session_state["_genpal_should_run"] = True
+                st.rerun()
+        elif error_type == "GENERATION_ERROR":
+            st.error("Generation failed. Check the backend terminal for details.")
+            for msg in errors[:20]:
+                st.warning(msg)
+            if st.button("Clear and Regenerate", type="secondary"):
+                _reset_pipeline()
+                st.session_state["_genpal_should_run"] = True
+                st.rerun()
+        else:
+            st.error("Validation failed. Export is blocked.")
+            for msg in errors[:20]:
+                st.warning(msg)
+            if st.button("Clear and Regenerate", type="secondary"):
+                _reset_pipeline()
+                st.session_state["_genpal_should_run"] = True
+                st.rerun()
         return
 
     if final_status == genpal.FINAL_MANUAL_REVIEW_REQUIRED:
@@ -908,13 +1080,7 @@ def page_progress() -> None:
 
 # ─── PAGE 4: Requestor Dashboard ─────────────────────────────────────────────
 def page_dashboard() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs done">Input</span><span class="fa">›</span>
-        <span class="fs done">Generate</span><span class="fa">›</span>
-        <span class="fs active">Dashboard</span><span class="fa">›</span>
-        <span class="fs">SME Review</span><span class="fa">›</span>
-        <span class="fs">Export Excel</span>
-    </div>""")
+    _flow_strip(2)
 
     inp = st.session_state.get("_genpal_inputs", {})
     section("Requestor Dashboard", "Monitor SME review progress, notifications, and download options.")
@@ -934,30 +1100,32 @@ def page_dashboard() -> None:
     unread    = sum(1 for n in notifs if not n["read"])
     review_pct = int(accepted / len(questions) * 100) if questions else 0
 
-    # Summary metrics
-    cols = st.columns(5)
-    metrics = [
-        ("Skill", skill[:20]+"…" if len(skill)>20 else skill),
-        ("SSID", ssid), ("SME Email", sme_email[:18]+"…" if len(sme_email)>18 else sme_email),
-        ("Total Questions", str(total)), ("SME Email Sent", "Yes"),
+    # 10 metric cards in two rows of 5
+    color_map = {"success":"#1E8E3E","error":"#D93025","info":"#1D4ED8","gray":"#6B7280","warning":"#B45309","purple":"#A100FF","dark":"#1F1F29"}
+    row1_metrics = [
+        ("Skill", skill[:18]+"…" if len(skill)>18 else skill, "dark"),
+        ("SSID", ssid, "dark"),
+        ("Total Questions", str(total), "dark"),
+        ("SME Email", sme_email[:16]+"…" if len(sme_email)>16 else sme_email, "dark"),
+        ("Email Sent", "Yes", "success"),
     ]
-    for col, (lbl, val) in zip(cols, metrics):
+    cols = st.columns(5)
+    for col, (lbl, val, style) in zip(cols, row1_metrics):
         with col:
-            h(f'<div class="metric-box"><div class="m-value" style="font-size:1rem;word-break:break-all;">{val}</div><div class="m-label">{lbl}</div></div>')
+            h(f'<div class="metric-box"><div class="m-value" style="font-size:1rem;word-break:break-all;color:{color_map[style]};">{val}</div><div class="m-label">{lbl}</div></div>')
 
     h('<div style="height:0.5rem"></div>')
-    cols2 = st.columns(6)
-    m2 = [
+    row2_metrics = [
         ("Accepted",  str(accepted),  "success"),
         ("Rejected",  str(rejected),  "error"),
         ("Regenerated", str(regen),   "info"),
         ("Pending",   str(pending),   "gray"),
-        ("Dup Warnings", str(dup_warns), "warning"),
-        ("Unread Notifs", str(unread), "purple"),
+        ("Dup Warns", str(dup_warns), "warning"),
+        ("Unread",    str(unread),    "purple"),
     ]
-    for col, (lbl, val, style) in zip(cols2, m2):
+    cols2 = st.columns(6)
+    for col, (lbl, val, style) in zip(cols2, row2_metrics):
         with col:
-            color_map = {"success":"#1E8E3E","error":"#D93025","info":"#1D4ED8","gray":"#6B7280","warning":"#B45309","purple":"#A100FF"}
             h(f'<div class="metric-box"><div class="m-value" style="color:{color_map[style]};">{val}</div><div class="m-label">{lbl}</div></div>')
 
     h('<div style="height:0.5rem"></div>')
@@ -1039,13 +1207,7 @@ def page_dashboard() -> None:
 
 # ─── PAGE 5: Send to SME ─────────────────────────────────────────────────────
 def page_sme_send() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs done">Generate</span><span class="fa">›</span>
-        <span class="fs done">Dashboard</span><span class="fa">›</span>
-        <span class="fs active">Send to SME</span><span class="fa">›</span>
-        <span class="fs">SME Review</span><span class="fa">›</span>
-        <span class="fs">Export</span>
-    </div>""")
+    _flow_strip(3)
 
     inp  = st.session_state.get("_genpal_inputs", {})
     skill = inp.get("skill","Microsoft SharePoint Server Development")
@@ -1113,13 +1275,7 @@ def page_sme_send() -> None:
 
 # ─── PAGE 6: SME Review Queue ─────────────────────────────────────────────────
 def page_sme_review() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs done">Generate</span><span class="fa">›</span>
-        <span class="fs active">SME Review</span><span class="fa">›</span>
-        <span class="fs">Question Review</span><span class="fa">›</span>
-        <span class="fs">Rework</span><span class="fa">›</span>
-        <span class="fs">Export</span>
-    </div>""")
+    _flow_strip(3)
 
     inp = st.session_state.get("_genpal_inputs", {})
     section("SME Review Workspace", "Review generated GenPal QnA questions — accept, reject, or regenerate.")
@@ -1147,9 +1303,22 @@ def page_sme_review() -> None:
     h(progress_bar(accepted/len(questions)*100 if questions else 0))
     h(f'<div style="font-size:0.72rem;color:var(--muted);margin-bottom:1rem;">Review Progress: {accepted}/{len(questions)} accepted</div>')
 
-    # Filters
-    filter_opts = ["All","Pending","Accepted","Rejected","Regenerated","Duplicate Warning"]
-    selected_filter = st.radio("Filter", filter_opts, horizontal=True, key="sme_filter", label_visibility="collapsed")
+    # Pill filter chips
+    filter_opts = ["All", "Pending", "Accepted", "Rejected", "Regenerated", "Dup Warning"]
+    if "sme_filter" not in st.session_state:
+        st.session_state["sme_filter"] = "All"
+    pill_cols = st.columns(len(filter_opts))
+    for col, opt in zip(pill_cols, filter_opts):
+        with col:
+            is_active = st.session_state["sme_filter"] == opt
+            if st.button(opt, key=f"pill_{opt}",
+                         type="primary" if is_active else "secondary",
+                         use_container_width=True):
+                st.session_state["sme_filter"] = opt
+                st.rerun()
+    selected_filter = st.session_state["sme_filter"]
+    if selected_filter == "Dup Warning":
+        selected_filter = "Duplicate Warning"
 
     filtered = questions
     if selected_filter == "Pending":        filtered = [q for q in questions if q["status"]=="Pending"]
@@ -1199,11 +1368,7 @@ def page_sme_review() -> None:
 
 # ─── PAGE 7: SME Question Review Detail ──────────────────────────────────────
 def page_sme_question() -> None:
-    h("""<div class="flow-strip">
-        <span class="fs done">SME Review Queue</span><span class="fa">›</span>
-        <span class="fs active">Question Review</span><span class="fa">›</span>
-        <span class="fs">Rework</span>
-    </div>""")
+    _flow_strip(3)
 
     questions = st.session_state.get("_genpal_sme_questions", MOCK_QUESTIONS)
     idx = st.session_state.get("_sme_selected_q_idx", 0)
