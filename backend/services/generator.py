@@ -84,7 +84,9 @@ def make_client():
         )
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key)
+    # Bounded timeout + retries so a stalled network call fails fast instead of
+    # leaving a job buffering in GENERATING forever.
+    client = OpenAI(api_key=api_key, timeout=90.0, max_retries=2)
     if config.is_langsmith_tracing_enabled():
         try:
             from langsmith.wrappers import wrap_openai

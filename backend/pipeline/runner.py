@@ -116,6 +116,34 @@ def _run(db, job_id: str) -> None:
         level_rows[level] = rows
         level_req.status = "GENERATED" if not remaining_dups else "GENERATED_WITH_DUPS"
 
+        # Persist this level's rows immediately so the UI shows incremental
+        # progress (generated_count grows per level) instead of staying at 0
+        # until the very end. These provisional rows (no title yet) are replaced
+        # by the final deduped + titled set at the end of the run.
+        for row in rows:
+            db.add(
+                Question(
+                    question_id=generate_id(),
+                    job_id=job_id,
+                    title=None,
+                    ssid=row.get("ssid", ""),
+                    skill=row.get("skill", ""),
+                    topic=row.get("topic", ""),
+                    question_type=row.get("question_type", "QnA"),
+                    career_level=row.get("career_level", ""),
+                    complexity=row.get("complexity", ""),
+                    question=row.get("question", ""),
+                    answer=row.get("answer", ""),
+                    options=row.get("options", ""),
+                    reference_url=row.get("reference_url", ""),
+                    status=constants.QuestionStatus.DRAFT,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                )
+            )
+        job.updated_at = datetime.utcnow()
+        db.commit()
+
     all_rows = []
     for level in constants.CAREER_LEVELS:
         if level in level_rows:
